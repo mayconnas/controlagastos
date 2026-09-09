@@ -11,6 +11,7 @@ const estado = {
   contas: [],
   filtros: { busca: "", conta: "", de: "", ate: "" },
   relatorio: { escopo: "pasta", ano: new Date().getFullYear() },
+  armazenamento: "local",
 };
 
 /* ------------------------------------------------------------------ */
@@ -96,6 +97,9 @@ function painelDaPasta() {
 /* ------------------------------------------------------------------ */
 
 async function carregarTudo() {
+  const status = await chamar("/api/status").catch(() => ({ armazenamento: "local" }));
+  estado.armazenamento = status.armazenamento;
+
   const periodos = await chamar("/api/meses");
   estado.meses = periodos.meses;
   estado.anos = periodos.anos;
@@ -123,11 +127,28 @@ async function recarregar() {
 /* ------------------------------------------------------------------ */
 
 function desenhar() {
+  desenharAvisoArmazenamento();
   desenharSeletorMes();
   desenharAbasPastas();
   desenharMenu();
   desenharConteudo();
   desenharResumoGeral();
+}
+
+function desenharAvisoArmazenamento() {
+  const area = $("#aviso-armazenamento");
+  if (estado.armazenamento !== "temporario") { area.innerHTML = ""; return; }
+  area.innerHTML = `
+    <div class="faixa-alerta">
+      <span class="ic">⚠️</span>
+      <div>
+        <b>Banco de dados temporário — seus lançamentos vão ser apagados.</b>
+        <span>Este site está no ar sem um banco permanente configurado. Para guardar os
+        dados de verdade, crie um banco gratuito no Turso e configure as variáveis
+        <code>TURSO_DATABASE_URL</code> e <code>TURSO_AUTH_TOKEN</code> na Vercel
+        (o passo a passo está no README do projeto).</span>
+      </div>
+    </div>`;
 }
 
 function desenharSeletorMes() {

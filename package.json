@@ -1,0 +1,22 @@
+{
+  "name": "controla-gastos",
+  "version": "1.0.0",
+  "private": true,
+  "description": "Controle de receitas e despesas por pasta (Corretor, Barbearia, Casa) com plano de contas e relatórios",
+  "type": "module",
+  "scripts": {
+    "dev": "tsx scripts/dev.ts",
+    "exemplo": "tsx scripts/exemplo.ts",
+    "test": "vitest run",
+    "typecheck": "tsc --noEmit"
+  },
+  "dependencies": {
+    "@libsql/client": "^0.18.0"
+  },
+  "devDependencies": {
+    "@types/node": "^22.10.0",
+    "tsx": "^4.19.0",
+    "typescript": "^5.7.0",
+    "vitest": "^2.1.0"
+  }
+}
