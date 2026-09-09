@@ -50,12 +50,26 @@ const servidor = createServer((req, res) => {
   })();
 });
 
-await prepararBanco();
+const modo = modoArmazenamento();
+
+// Sem banco o servidor sobe do mesmo jeito: a interface explica o que falta,
+// em vez de o processo morrer sem dar pista nenhuma.
+if (modo === "sem-banco") {
+  console.warn("  ! Nenhum banco configurado — a interface vai explicar o que fazer.");
+} else {
+  await prepararBanco();
+}
+
+const NOMES_DO_MODO = {
+  turso: "Turso (nuvem)",
+  local: "arquivo local",
+  "sem-banco": "nenhum (falta conectar)",
+} as const;
+
 servidor.listen(PORTA, HOST, () => {
-  const modo = modoArmazenamento();
   console.log("=".repeat(56));
   console.log("  Minhas Finanças - Controla Gastos");
-  console.log(`  Armazenamento: ${modo === "turso" ? "Turso (nuvem)" : "arquivo local"}`);
+  console.log(`  Armazenamento: ${NOMES_DO_MODO[modo]}`);
   console.log(`  Acesse: http://${HOST}:${PORTA}`);
   console.log("  (Ctrl+C para encerrar)");
   console.log("=".repeat(56));

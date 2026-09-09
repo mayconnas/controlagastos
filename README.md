@@ -29,8 +29,8 @@ você adiciona um **sem sair do painel da Vercel**, pelo Marketplace dela.
 2. Não é preciso mudar nada nas configurações de build — o `vercel.json` já está pronto.
 3. Clique em **Deploy**.
 
-Nesse momento o site já sobe e funciona, mas mostra uma faixa laranja avisando que o
-banco é temporário. É o passo 2 que resolve isso.
+Nesse momento o site já sobe, mas ainda sem banco: a tela mostra uma faixa laranja com o
+passo a passo abaixo. É o passo 2 que resolve isso.
 
 ### Passo 2 — adicionar o banco pelo painel da Vercel
 
@@ -38,7 +38,9 @@ O Turso é o próprio SQLite hospedado, e está no Marketplace da Vercel. Isso s
 você não precisa criar conta separada nem usar terminal:
 
 1. No projeto, abra a aba **Storage**.
-2. Clique em **Browse Marketplace** (ou *Create Database*) e escolha **Turso**.
+2. Clique em **Browse Marketplace** (ou *Create Database*). A lista abre mostrando
+   *Global Config* e *Blob* no topo, e abaixo os *Marketplace Database Providers* —
+   **role a lista até encontrar o Turso**, ele não fica entre os primeiros.
 3. Crie o banco e conecte-o a este projeto.
 4. Volte em **Deployments** e clique em **Redeploy** no deploy mais recente.
 
@@ -77,11 +79,11 @@ Turso em vez do faturamento pela Vercel):
 
 ### Se aparecer a faixa laranja de alerta
 
-![Aviso de banco temporário](docs/aviso-banco-temporario.png)
+![Falta conectar o banco](docs/falta-conectar-banco.png)
 
-Significa que o app subiu **sem** o banco conectado e está gravando num banco
-temporário. Faça o passo 2 acima (aba **Storage** → Turso) e clique em **Redeploy**.
-A faixa some sozinha quando as variáveis estiverem no ar.
+Significa que o app subiu **sem** o banco conectado. Ele não perde dados nesse estado —
+simplesmente ainda não tem onde guardá-los, e mostra o passo a passo na própria tela.
+Faça o passo 2 acima (aba **Storage** → Turso) e clique em **Redeploy**.
 
 ---
 
@@ -101,7 +103,7 @@ aqui funciona lá.
 ## Estrutura do projeto
 
 ```
-api/index.ts       função da Vercel (ponto de entrada)
+api/[...rota].ts   função da Vercel: responde por tudo em /api/
 api/_rotas.ts      roteador: transforma Request em Response
 api/_servico.ts    regras de negócio: validações, consultas e relatórios
 api/_db.ts         conexão, criação das tabelas e dados iniciais
@@ -170,10 +172,21 @@ turso db shell controla-gastos .dump > backup.sql
 
 Filtros aceitos nas listagens: `pasta`, `mes`, `tipo`, `conta`, `busca`, `de`, `ate`.
 
+## Detalhe técnico: por que `@libsql/client/web`
+
+O pacote `@libsql/client`, na entrada padrão, carrega um binário nativo (`libsql`) para
+conseguir abrir arquivos `.db`. Esse binário não sobrevive ao empacotamento da função
+serverless da Vercel — a função quebra ao carregar e responde uma página de erro em vez
+de JSON.
+
+Por isso o `api/_db.ts` escolhe a entrada conforme o destino: `@libsql/client/web` (só
+HTTP, sem binário) quando o banco é o Turso, e `@libsql/client` quando é um arquivo local.
+O import é dinâmico justamente para o binário nativo nunca ser carregado na Vercel.
+
 ## Testes
 
 ```bash
-npm test          # 25 testes das regras de negócio e relatórios
+npm test          # 33 testes das regras de negócio, relatórios e armazenamento
 npm run typecheck # verificação de tipos
 ```
 

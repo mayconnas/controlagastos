@@ -1,17 +1,23 @@
 /**
  * Conexão com o banco e criação do schema.
  *
- * O mesmo código serve os dois cenários:
- *  - Na Vercel, apontando para o Turso (SQLite hospedado), via TURSO_DATABASE_URL.
- *  - Na sua máquina, apontando para um arquivo local (file:data/financas.db).
+ * Importante sobre a Vercel: o pacote @libsql/client, na entrada padrão, carrega
+ * um binário nativo (libsql) para conseguir abrir arquivos .db. Esse binário não
+ * sobrevive ao empacotamento da função serverless, então aqui a entrada usada
+ * depende do destino:
  *
- * Na Vercel sem Turso configurado o app ainda sobe, mas grava em /tmp, que é
- * apagado a qualquer momento — a interface avisa isso em destaque.
+ *   - arquivo local (file:...) -> "@libsql/client", com o binário nativo;
+ *   - Turso (libsql://...)     -> "@libsql/client/web", só HTTP, sem binário.
+ *
+ * O import é dinâmico justamente para que o binário nativo nunca seja carregado
+ * quando o app está rodando na Vercel.
  */
 
-import { createClient, type Client } from "@libsql/client";
+import type { Client } from "@libsql/client";
 
-export type ModoArmazenamento = "turso" | "local" | "temporario";
+import { ErroApi } from "./_erros.js";
+
+export type ModoArmazenamento = "turso" | "local" | "sem-banco";
 
 const NA_VERCEL = Boolean(process.env.VERCEL);
 
@@ -42,26 +48,42 @@ export function tokenRemoto(): string | undefined {
   return primeiraVariavel(NOMES_TOKEN);
 }
 
+function urlLocal(): string | undefined {
+  if (process.env.FINANCAS_DB) return `file:${process.env.FINANCAS_DB}`;
+  // Na Vercel não existe disco permanente, então arquivo local só faz sentido fora dela.
+  return NA_VERCEL ? undefined : "file:data/financas.db";
+}
+
 export function modoArmazenamento(): ModoArmazenamento {
   if (urlRemota()) return "turso";
-  return NA_VERCEL ? "temporario" : "local";
+  return urlLocal() ? "local" : "sem-banco";
 }
 
-function urlDoBanco(): string {
+export const SEM_BANCO =
+  "Este site ainda não tem um banco de dados conectado. Na Vercel, abra a aba Storage " +
+  "do projeto, adicione o Turso pelo Marketplace e clique em Redeploy.";
+
+async function criarCliente(): Promise<Client> {
   const remota = urlRemota();
-  if (remota) return remota;
-  if (process.env.FINANCAS_DB) return `file:${process.env.FINANCAS_DB}`;
-  // Sem Turso: /tmp na Vercel (temporário), arquivo do projeto na sua máquina.
-  return NA_VERCEL ? "file:/tmp/financas.db" : "file:data/financas.db";
+  if (remota) {
+    // Entrada "web": puramente HTTP, sem binário nativo — é a que funciona na Vercel.
+    const { createClient } = await import("@libsql/client/web");
+    return createClient({ url: remota, authToken: tokenRemoto() });
+  }
+  const local = urlLocal();
+  if (!local) throw new ErroApi(SEM_BANCO, 503);
+  const { createClient } = await import("@libsql/client");
+  return createClient({ url: local });
 }
 
-let cliente: Client | undefined;
+let cliente: Promise<Client> | undefined;
 
-export function db(): Client {
+/** Cliente do banco, criado sob demanda e reaproveitado na mesma instância. */
+export function bd(): Promise<Client> {
   if (!cliente) {
-    cliente = createClient({
-      url: urlDoBanco(),
-      authToken: tokenRemoto(),
+    cliente = criarCliente().catch((erro) => {
+      cliente = undefined; // permite tentar de novo na próxima requisição
+      throw erro;
     });
   }
   return cliente;
@@ -157,7 +179,7 @@ let schemaPronto: Promise<void> | undefined;
 export function prepararBanco(): Promise<void> {
   if (!schemaPronto) {
     schemaPronto = (async () => {
-      const cliente = db();
+      const cliente = await bd();
       await cliente.executeMultiple(SCHEMA);
 
       const { rows } = await cliente.execute("SELECT COUNT(*) AS n FROM pastas");

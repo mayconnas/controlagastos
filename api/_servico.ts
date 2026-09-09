@@ -9,7 +9,10 @@
 
 import type { InArgs, InValue, ResultSet, Row } from "@libsql/client";
 
-import { db, prepararBanco } from "./_db.js";
+import { bd, prepararBanco } from "./_db.js";
+import { ErroApi } from "./_erros.js";
+
+export { ErroApi };
 
 export type Tipo = "receita" | "despesa";
 export const TIPOS: Tipo[] = ["receita", "despesa"];
@@ -19,18 +22,11 @@ export const MESES_PT = [
   "Julho", "Agosto", "Setembro", "Outubro", "Novembro", "Dezembro",
 ];
 
-export class ErroApi extends Error {
-  constructor(public readonly mensagem: string, public readonly status = 400) {
-    super(mensagem);
-    this.name = "ErroApi";
-  }
-}
-
 type Payload = Record<string, unknown>;
 
 async function consultar(sql: string, args: InArgs = []): Promise<ResultSet> {
   await prepararBanco();
-  return db().execute({ sql, args });
+  return (await bd()).execute({ sql, args });
 }
 
 function linhas(resultado: ResultSet): Array<Record<string, any>> {
@@ -300,7 +296,7 @@ export async function atualizarConta(contaId: number, p: Payload) {
   }
 
   await prepararBanco();
-  const transacao = await db().transaction("write");
+  const transacao = await (await bd()).transaction("write");
   try {
     await transacao.execute({
       sql: "UPDATE contas SET pasta_id = ?, codigo = ?, nome = ?, tipo = ?, cor = ?, ativo = ? WHERE id = ?",

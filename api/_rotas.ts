@@ -8,8 +8,8 @@ import { dirname, join, normalize } from "node:path";
 import { fileURLToPath } from "node:url";
 
 import { modoArmazenamento } from "./_db.js";
+import { ErroApi } from "./_erros.js";
 import {
-  ErroApi,
   TIPOS,
   type Filtros,
   type Tipo,
@@ -237,8 +237,23 @@ async function despachar(request: Request, url: URL): Promise<Response> {
   return json({ erro: "Método não permitido." }, 405);
 }
 
+/**
+ * Caminho realmente pedido pelo navegador. Normalmente é o da própria URL; os
+ * cabeçalhos são consultados apenas caso algum rewrite tenha reescrito o
+ * caminho antes de chegar aqui.
+ */
+function caminhoOriginal(request: Request, url: URL): URL {
+  if (!/^\/api\/(index|\[\.\.\.rota\])?$/.test(url.pathname)) return url;
+  const cabecalhos = ["x-vercel-original-path", "x-original-path", "x-forwarded-uri"];
+  for (const nome of cabecalhos) {
+    const bruto = request.headers.get(nome);
+    if (bruto?.startsWith("/api/")) return new URL(bruto, url.origin);
+  }
+  return url;
+}
+
 export async function atender(request: Request): Promise<Response> {
-  const url = new URL(request.url);
+  const url = caminhoOriginal(request, new URL(request.url));
   try {
     return await despachar(request, url);
   } catch (erro) {
