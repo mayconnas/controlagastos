@@ -1,0 +1,41 @@
+<!doctype html>
+<html lang="pt-BR">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <title>Minhas Finanças — Controla Gastos</title>
+  <link rel="icon" href="data:image/svg+xml,<svg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 100 100'><text y='.9em' font-size='90'>💰</text></svg>">
+  <link rel="stylesheet" href="/style.css">
+</head>
+<body>
+  <div class="wrap">
+    <header class="topo">
+      <div class="marca">
+        <div class="emoji">👛</div>
+        <div>
+          <h1>Minhas <span>Finanças</span></h1>
+          <p>Organize seus ganhos, controle seus gastos, conquiste seus objetivos!</p>
+        </div>
+      </div>
+      <div class="seletor-mes">
+        <span>🗓️</span>
+        <select id="filtro-mes" aria-label="Mês de referência"></select>
+      </div>
+      <button class="btn claro" id="btn-nova-pasta" title="Cadastrar uma nova pasta">＋ Pasta</button>
+    </header>
+
+    <nav class="pastas" id="abas-pastas"></nav>
+
+    <section class="painel">
+      <aside class="menu" id="menu"></aside>
+      <section class="conteudo" id="conteudo"></section>
+    </section>
+
+    <section class="resumo-geral" id="resumo-geral"></section>
+  </div>
+
+  <div id="modal"></div>
+  <div id="avisos"></div>
+  <script src="/app.js"></script>
+</body>
+</html>
