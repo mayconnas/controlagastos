@@ -19,16 +19,46 @@ plano de contas e relatórios. Feito em **TypeScript**, para rodar na **Vercel**
 
 ## Como colocar na Vercel
 
-O app roda na Vercel, mas com um detalhe importante: **a Vercel não guarda arquivos**.
-O disco lá é apagado a todo momento, então o banco não pode ser um arquivo — ele precisa
-ficar num serviço de banco de dados. Por isso o passo 1 abaixo não é opcional: sem ele o
-site sobe e funciona, mas apaga os seus lançamentos sozinho (e a tela avisa isso em
-laranja, bem grande).
+A Vercel não guarda arquivos: o disco dela é apagado a todo momento, então o banco não
+pode ser um arquivo dentro do projeto. Ele precisa ser um banco de dados de verdade — e
+você adiciona um **sem sair do painel da Vercel**, pelo Marketplace dela.
 
-### Passo 1 — criar o banco no Turso (gratuito, 2 minutos)
+### Passo 1 — subir o projeto
 
-O Turso é o próprio SQLite hospedado na nuvem. O plano gratuito é mais do que suficiente
-para uso pessoal.
+1. Em <https://vercel.com/new>, importe este repositório do GitHub.
+2. Não é preciso mudar nada nas configurações de build — o `vercel.json` já está pronto.
+3. Clique em **Deploy**.
+
+Nesse momento o site já sobe e funciona, mas mostra uma faixa laranja avisando que o
+banco é temporário. É o passo 2 que resolve isso.
+
+### Passo 2 — adicionar o banco pelo painel da Vercel
+
+O Turso é o próprio SQLite hospedado, e está no Marketplace da Vercel. Isso significa que
+você não precisa criar conta separada nem usar terminal:
+
+1. No projeto, abra a aba **Storage**.
+2. Clique em **Browse Marketplace** (ou *Create Database*) e escolha **Turso**.
+3. Crie o banco e conecte-o a este projeto.
+4. Volte em **Deployments** e clique em **Redeploy** no deploy mais recente.
+
+A Vercel provisiona a conta no Turso, conecta ao projeto e **cadastra sozinha** as
+variáveis de ambiente `TURSO_DATABASE_URL` e `TURSO_AUTH_TOKEN` — é por isso que não há
+nada para copiar e colar. O Redeploy é necessário porque variáveis novas só valem a
+partir do próximo deploy.
+
+Pronto. Na primeira vez que o site abrir, as tabelas e o plano de contas inicial são
+criados sozinhos.
+
+> **Se você procurar tutoriais antigos**, vai achar "Vercel KV" e "Vercel Postgres".
+> Esses produtos foram descontinuados: hoje todo banco de dados na Vercel vem pelo
+> Marketplace. Além do Turso, ele oferece Neon e Supabase (Postgres) e Upstash (Redis) —
+> mas esses exigiriam reescrever o SQL do projeto, enquanto o Turso é o mesmo SQLite.
+
+### Alternativa — criar o banco direto no Turso
+
+Se preferir gerenciar o banco fora da Vercel (ou se quiser usar a camada gratuita do
+Turso em vez do faturamento pela Vercel):
 
 1. Crie a conta em <https://turso.tech>.
 2. Instale a ferramenta de linha de comando e faça login:
@@ -36,40 +66,22 @@ para uso pessoal.
    curl -sSfL https://get.tur.so/install.sh | bash
    turso auth login
    ```
-3. Crie o banco e pegue os dois dados que a Vercel vai precisar:
+3. Crie o banco e pegue os dois dados:
    ```bash
    turso db create controla-gastos
    turso db show controla-gastos --url        # copie: libsql://...
    turso db tokens create controla-gastos     # copie: o token
    ```
-
-> Prefere sem terminal? Dá para criar o banco e gerar o token pelo painel do Turso, na
-> própria página do banco.
-
-### Passo 2 — subir o projeto
-
-1. Em <https://vercel.com/new>, importe este repositório do GitHub.
-2. Não é preciso mudar nada nas configurações de build — o `vercel.json` já está pronto.
-3. Antes de clicar em **Deploy**, abra **Environment Variables** e cadastre as duas:
-
-   | Nome | Valor |
-   | --- | --- |
-   | `TURSO_DATABASE_URL` | o `libsql://...` do passo 1 |
-   | `TURSO_AUTH_TOKEN` | o token do passo 1 |
-
-4. **Deploy**. Na primeira vez que o site abrir, as tabelas e o plano de contas inicial
-   são criados sozinhos.
-
-> Se você já tinha feito o deploy antes de cadastrar as variáveis, adicione-as em
-> *Settings → Environment Variables* e clique em **Redeploy**. Variáveis novas só valem
-> a partir do próximo deploy.
+4. Na Vercel, em *Settings → Environment Variables*, cadastre `TURSO_DATABASE_URL` e
+   `TURSO_AUTH_TOKEN` com esses valores, e clique em **Redeploy**.
 
 ### Se aparecer a faixa laranja de alerta
 
 ![Aviso de banco temporário](docs/aviso-banco-temporario.png)
 
-Significa que o app subiu **sem** as variáveis do Turso e está gravando num banco
-temporário. Faça o passo 1, cadastre as variáveis e clique em Redeploy.
+Significa que o app subiu **sem** o banco conectado e está gravando num banco
+temporário. Faça o passo 2 acima (aba **Storage** → Turso) e clique em **Redeploy**.
+A faixa some sozinha quando as variáveis estiverem no ar.
 
 ---
 

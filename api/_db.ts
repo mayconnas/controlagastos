@@ -15,13 +15,41 @@ export type ModoArmazenamento = "turso" | "local" | "temporario";
 
 const NA_VERCEL = Boolean(process.env.VERCEL);
 
+/**
+ * A integração do Turso pelo Marketplace da Vercel cadastra as variáveis sozinha,
+ * mas o nome pode variar conforme por onde o banco foi criado. Aceitamos os
+ * nomes usuais para você não precisar renomear nada no painel.
+ */
+const NOMES_URL = ["TURSO_DATABASE_URL", "TURSO_URL", "LIBSQL_URL", "DATABASE_URL"];
+const NOMES_TOKEN = ["TURSO_AUTH_TOKEN", "TURSO_TOKEN", "LIBSQL_AUTH_TOKEN", "DATABASE_AUTH_TOKEN"];
+
+function primeiraVariavel(nomes: string[]): string | undefined {
+  for (const nome of nomes) {
+    const valor = process.env[nome]?.trim();
+    if (valor) return valor;
+  }
+  return undefined;
+}
+
+/** URL do Turso, se houver uma configurada. DATABASE_URL só vale se for libsql. */
+function urlRemota(): string | undefined {
+  const url = primeiraVariavel(NOMES_URL);
+  if (!url) return undefined;
+  return /^(libsql|wss?|https?):\/\//.test(url) ? url : undefined;
+}
+
+export function tokenRemoto(): string | undefined {
+  return primeiraVariavel(NOMES_TOKEN);
+}
+
 export function modoArmazenamento(): ModoArmazenamento {
-  if (process.env.TURSO_DATABASE_URL) return "turso";
+  if (urlRemota()) return "turso";
   return NA_VERCEL ? "temporario" : "local";
 }
 
 function urlDoBanco(): string {
-  if (process.env.TURSO_DATABASE_URL) return process.env.TURSO_DATABASE_URL;
+  const remota = urlRemota();
+  if (remota) return remota;
   if (process.env.FINANCAS_DB) return `file:${process.env.FINANCAS_DB}`;
   // Sem Turso: /tmp na Vercel (temporário), arquivo do projeto na sua máquina.
   return NA_VERCEL ? "file:/tmp/financas.db" : "file:data/financas.db";
@@ -33,7 +61,7 @@ export function db(): Client {
   if (!cliente) {
     cliente = createClient({
       url: urlDoBanco(),
-      authToken: process.env.TURSO_AUTH_TOKEN,
+      authToken: tokenRemoto(),
     });
   }
   return cliente;

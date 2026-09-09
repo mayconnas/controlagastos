@@ -142,11 +142,11 @@ function desenharAvisoArmazenamento() {
     <div class="faixa-alerta">
       <span class="ic">⚠️</span>
       <div>
-        <b>Banco de dados temporário — seus lançamentos vão ser apagados.</b>
-        <span>Este site está no ar sem um banco permanente configurado. Para guardar os
-        dados de verdade, crie um banco gratuito no Turso e configure as variáveis
-        <code>TURSO_DATABASE_URL</code> e <code>TURSO_AUTH_TOKEN</code> na Vercel
-        (o passo a passo está no README do projeto).</span>
+        <span class="titulo">Banco de dados temporário — seus lançamentos vão ser apagados.</span>
+        <span>Este site está no ar sem um banco permanente. Na Vercel, abra a aba
+        <b>Storage</b> do projeto, adicione o <b>Turso</b> pelo Marketplace e clique em
+        <b>Redeploy</b> — as variáveis de ambiente são configuradas sozinhas. O passo a
+        passo está no README do projeto.</span>
       </div>
     </div>`;
 }

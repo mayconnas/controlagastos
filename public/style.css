@@ -43,7 +43,8 @@ a { color: var(--azul); }
   border-radius: 12px; padding: 14px 18px; margin-bottom: 4px;
 }
 .faixa-alerta .ic { font-size: 22px; line-height: 1.2; }
-.faixa-alerta b { display: block; color: var(--ambar); margin-bottom: 3px; }
+.faixa-alerta .titulo { display: block; color: var(--ambar); font-weight: 700; margin-bottom: 3px; }
+.faixa-alerta span b { color: var(--texto); }
 .faixa-alerta span { color: var(--texto-2); font-size: 13px; line-height: 1.5; }
 .faixa-alerta code {
   background: rgba(255, 255, 255, .07); padding: 1px 6px;
