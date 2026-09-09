@@ -1,10 +1,7 @@
-import { mkdtempSync, rmSync } from "node:fs";
-import { tmpdir } from "node:os";
-import { join } from "node:path";
+import { beforeEach, describe, expect, it } from "vitest";
 
-import { afterEach, beforeEach, describe, expect, it } from "vitest";
+import { bancoLimpo } from "./apoio.js";
 
-let pasta: string;
 let servico: typeof import("../api/_servico.js");
 let pastas: Record<string, number>;
 let contas: Map<string, number>;
@@ -16,15 +13,8 @@ const conta = (pastaNome: string, contaNome: string): number => {
 };
 
 beforeEach(async () => {
-  pasta = mkdtempSync(join(tmpdir(), "financas-"));
-  process.env.FINANCAS_DB = join(pasta, "teste.db");
-  delete process.env.TURSO_DATABASE_URL;
-  delete process.env.VERCEL;
-
-  const bd = await import("../api/_db.js");
-  bd.resetarConexao();
+  await bancoLimpo();
   servico = await import("../api/_servico.js");
-  await bd.prepararBanco();
 
   pastas = Object.fromEntries(
     (await servico.listarPastas()).map((p) => [String(p.nome), Number(p.id)]),
@@ -32,10 +22,6 @@ beforeEach(async () => {
   contas = new Map(
     (await servico.listarContas()).map((c) => [`${c.pasta_nome}|${c.nome}`, Number(c.id)]),
   );
-});
-
-afterEach(() => {
-  rmSync(pasta, { recursive: true, force: true });
 });
 
 describe("dados iniciais", () => {

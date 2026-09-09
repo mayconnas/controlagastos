@@ -1,139 +1,162 @@
 /**
- * Conexão com o banco e criação do schema.
+ * Conexão com o banco (PostgreSQL / Neon) e criação do schema.
  *
- * Importante sobre a Vercel: o pacote @libsql/client, na entrada padrão, carrega
- * um binário nativo (libsql) para conseguir abrir arquivos .db. Esse binário não
- * sobrevive ao empacotamento da função serverless, então aqui a entrada usada
- * depende do destino:
- *
- *   - arquivo local (file:...) -> "@libsql/client", com o binário nativo;
- *   - Turso (libsql://...)     -> "@libsql/client/web", só HTTP, sem binário.
- *
- * O import é dinâmico justamente para que o binário nativo nunca seja carregado
- * quando o app está rodando na Vercel.
+ * O driver é o "pg", que é JavaScript puro — sem binário nativo, que foi
+ * justamente o que quebrava a função serverless antes. Ele conversa tanto com o
+ * Neon (usando a DATABASE_URL que a Vercel injeta) quanto com um PostgreSQL
+ * comum na sua máquina, então o código é o mesmo nos dois casos.
  */
 
-import type { Client } from "@libsql/client";
+import pg from "pg";
 
 import { ErroApi } from "./_erros.js";
 
-export type ModoArmazenamento = "turso" | "local" | "sem-banco";
+export type ModoArmazenamento = "neon" | "local" | "sem-banco";
+
+// Sem isto, o driver devolve BIGINT (SUM, COUNT) como string, e as somas do
+// painel virariam concatenação de texto em vez de aritmética.
+pg.types.setTypeParser(pg.types.builtins.INT8, (valor) => Number(valor));
 
 const NA_VERCEL = Boolean(process.env.VERCEL);
 
 /**
- * A integração do Turso pelo Marketplace da Vercel cadastra as variáveis sozinha,
- * mas o nome pode variar conforme por onde o banco foi criado. Aceitamos os
- * nomes usuais para você não precisar renomear nada no painel.
+ * A integração do Neon pelo Marketplace da Vercel cadastra a variável sozinha.
+ * Aceitamos os nomes usuais para não depender de um só.
  */
-const NOMES_URL = ["TURSO_DATABASE_URL", "TURSO_URL", "LIBSQL_URL", "DATABASE_URL"];
-const NOMES_TOKEN = ["TURSO_AUTH_TOKEN", "TURSO_TOKEN", "LIBSQL_AUTH_TOKEN", "DATABASE_AUTH_TOKEN"];
+const NOMES_URL = ["DATABASE_URL", "POSTGRES_URL", "PGURL", "DATABASE_URL_UNPOOLED"];
 
-function primeiraVariavel(nomes: string[]): string | undefined {
-  for (const nome of nomes) {
+function urlDoBanco(): string | undefined {
+  for (const nome of NOMES_URL) {
     const valor = process.env[nome]?.trim();
-    if (valor) return valor;
+    if (valor && /^postgres(ql)?:\/\//.test(valor)) return valor;
   }
   return undefined;
 }
 
-/** URL do Turso, se houver uma configurada. DATABASE_URL só vale se for libsql. */
-function urlRemota(): string | undefined {
-  const url = primeiraVariavel(NOMES_URL);
-  if (!url) return undefined;
-  return /^(libsql|wss?|https?):\/\//.test(url) ? url : undefined;
-}
-
-export function tokenRemoto(): string | undefined {
-  return primeiraVariavel(NOMES_TOKEN);
-}
-
-function urlLocal(): string | undefined {
-  if (process.env.FINANCAS_DB) return `file:${process.env.FINANCAS_DB}`;
-  // Na Vercel não existe disco permanente, então arquivo local só faz sentido fora dela.
-  return NA_VERCEL ? undefined : "file:data/financas.db";
-}
-
 export function modoArmazenamento(): ModoArmazenamento {
-  if (urlRemota()) return "turso";
-  return urlLocal() ? "local" : "sem-banco";
+  const url = urlDoBanco();
+  if (!url) return "sem-banco";
+  return /localhost|127\.0\.0\.1/.test(url) ? "local" : "neon";
 }
 
 export const SEM_BANCO =
   "Este site ainda não tem um banco de dados conectado. Na Vercel, abra a aba Storage " +
-  "do projeto, adicione o Turso pelo Marketplace e clique em Redeploy.";
+  "do projeto, conecte o banco Neon a este projeto e clique em Redeploy.";
 
-async function criarCliente(): Promise<Client> {
-  const remota = urlRemota();
-  if (remota) {
-    // Entrada "web": puramente HTTP, sem binário nativo — é a que funciona na Vercel.
-    const { createClient } = await import("@libsql/client/web");
-    return createClient({ url: remota, authToken: tokenRemoto() });
-  }
-  const local = urlLocal();
-  if (!local) throw new ErroApi(SEM_BANCO, 503);
-  const { createClient } = await import("@libsql/client");
-  return createClient({ url: local });
+/** O Neon exige TLS; um PostgreSQL local normalmente não tem certificado. */
+export function configuracaoSsl(url: string): pg.ConnectionConfig["ssl"] {
+  if (/sslmode=disable/.test(url)) return false;
+  if (/@(localhost|127\.0\.0\.1)[:/]/.test(url)) return false;
+  return { rejectUnauthorized: true };
 }
 
-let cliente: Promise<Client> | undefined;
+let pool: pg.Pool | undefined;
 
-/** Cliente do banco, criado sob demanda e reaproveitado na mesma instância. */
-export function bd(): Promise<Client> {
-  if (!cliente) {
-    cliente = criarCliente().catch((erro) => {
-      cliente = undefined; // permite tentar de novo na próxima requisição
-      throw erro;
+function conexoes(): pg.Pool {
+  if (!pool) {
+    const url = urlDoBanco();
+    if (!url) throw new ErroApi(SEM_BANCO, 503);
+    pool = new pg.Pool({
+      connectionString: url,
+      ssl: configuracaoSsl(url),
+      // Cada instância serverless atende uma requisição por vez; abrir mais
+      // conexões só desperdiçaria o limite do plano.
+      max: NA_VERCEL ? 1 : 5,
+      idleTimeoutMillis: 10_000,
+      connectionTimeoutMillis: 15_000,
     });
+    pool.on("error", (erro) => console.error("Erro ocioso no pool do banco:", erro));
   }
-  return cliente;
+  return pool;
 }
+
+export interface Resultado {
+  rows: Array<Record<string, any>>;
+  rowCount: number;
+}
+
+export type Consulta = (sql: string, args?: unknown[]) => Promise<Resultado>;
+
+/**
+ * As consultas do projeto são escritas com "?" (mais legível ao montar filtros
+ * dinâmicos); o PostgreSQL usa $1, $2... A conversão acontece aqui.
+ */
+function comPlaceholders(sql: string): string {
+  let indice = 0;
+  return sql.replace(/\?/g, () => `$${(indice += 1)}`);
+}
+
+export async function consultar(sql: string, args: unknown[] = []): Promise<Resultado> {
+  const resultado = await conexoes().query(comPlaceholders(sql), args);
+  return { rows: resultado.rows, rowCount: resultado.rowCount ?? 0 };
+}
+
+/** Executa várias consultas numa transação, desfazendo tudo em caso de erro. */
+export async function transacao<T>(acao: (q: Consulta) => Promise<T>): Promise<T> {
+  const cliente = await conexoes().connect();
+  const consulta: Consulta = async (sql, args = []) => {
+    const resultado = await cliente.query(comPlaceholders(sql), args);
+    return { rows: resultado.rows, rowCount: resultado.rowCount ?? 0 };
+  };
+  try {
+    await cliente.query("BEGIN");
+    const valor = await acao(consulta);
+    await cliente.query("COMMIT");
+    return valor;
+  } catch (erro) {
+    await cliente.query("ROLLBACK").catch(() => {});
+    throw erro;
+  } finally {
+    cliente.release();
+  }
+}
+
+/** Código do PostgreSQL para violação de restrição de unicidade. */
+export const UNICIDADE_VIOLADA = "23505";
 
 /** Usado nos testes, para trocar de banco entre um caso e outro. */
-export function resetarConexao(): void {
-  cliente = undefined;
+export async function resetarConexao(): Promise<void> {
+  const anterior = pool;
+  pool = undefined;
   schemaPronto = undefined;
+  await anterior?.end().catch(() => {});
 }
 
-const SCHEMA = `
-CREATE TABLE IF NOT EXISTS pastas (
-    id        INTEGER PRIMARY KEY AUTOINCREMENT,
-    nome      TEXT    NOT NULL UNIQUE,
-    subtitulo TEXT    NOT NULL DEFAULT '',
-    icone     TEXT    NOT NULL DEFAULT 'folder',
-    cor       TEXT    NOT NULL DEFAULT '#3b82f6',
-    ordem     INTEGER NOT NULL DEFAULT 0
-);
-
-CREATE TABLE IF NOT EXISTS contas (
-    id       INTEGER PRIMARY KEY AUTOINCREMENT,
-    pasta_id INTEGER REFERENCES pastas(id) ON DELETE CASCADE,
-    codigo   TEXT    NOT NULL DEFAULT '',
-    nome     TEXT    NOT NULL,
-    tipo     TEXT    NOT NULL CHECK (tipo IN ('receita', 'despesa')),
-    cor      TEXT    NOT NULL DEFAULT '#3b82f6',
-    ativo    INTEGER NOT NULL DEFAULT 1
-);
-
-CREATE UNIQUE INDEX IF NOT EXISTS idx_contas_unicas
-    ON contas (IFNULL(pasta_id, -1), tipo, nome);
-
-CREATE TABLE IF NOT EXISTS lancamentos (
-    id             INTEGER PRIMARY KEY AUTOINCREMENT,
-    pasta_id       INTEGER NOT NULL REFERENCES pastas(id) ON DELETE CASCADE,
-    conta_id       INTEGER NOT NULL REFERENCES contas(id) ON DELETE RESTRICT,
-    tipo           TEXT    NOT NULL CHECK (tipo IN ('receita', 'despesa')),
-    data           TEXT    NOT NULL,
-    descricao      TEXT    NOT NULL DEFAULT '',
-    valor_centavos INTEGER NOT NULL CHECK (valor_centavos > 0),
-    observacao     TEXT    NOT NULL DEFAULT '',
-    criado_em      TEXT    NOT NULL DEFAULT (datetime('now'))
-);
-
-CREATE INDEX IF NOT EXISTS idx_lanc_data  ON lancamentos (data);
-CREATE INDEX IF NOT EXISTS idx_lanc_pasta ON lancamentos (pasta_id, data);
-CREATE INDEX IF NOT EXISTS idx_lanc_conta ON lancamentos (conta_id);
-`;
+const SCHEMA = [
+  `CREATE TABLE IF NOT EXISTS pastas (
+      id        INTEGER GENERATED BY DEFAULT AS IDENTITY PRIMARY KEY,
+      nome      TEXT    NOT NULL UNIQUE,
+      subtitulo TEXT    NOT NULL DEFAULT '',
+      icone     TEXT    NOT NULL DEFAULT 'folder',
+      cor       TEXT    NOT NULL DEFAULT '#3b82f6',
+      ordem     INTEGER NOT NULL DEFAULT 0
+  )`,
+  `CREATE TABLE IF NOT EXISTS contas (
+      id       INTEGER GENERATED BY DEFAULT AS IDENTITY PRIMARY KEY,
+      pasta_id INTEGER REFERENCES pastas(id) ON DELETE CASCADE,
+      codigo   TEXT    NOT NULL DEFAULT '',
+      nome     TEXT    NOT NULL,
+      tipo     TEXT    NOT NULL CHECK (tipo IN ('receita', 'despesa')),
+      cor      TEXT    NOT NULL DEFAULT '#3b82f6',
+      ativo    INTEGER NOT NULL DEFAULT 1
+  )`,
+  `CREATE UNIQUE INDEX IF NOT EXISTS idx_contas_unicas
+      ON contas ((COALESCE(pasta_id, -1)), tipo, nome)`,
+  `CREATE TABLE IF NOT EXISTS lancamentos (
+      id             INTEGER GENERATED BY DEFAULT AS IDENTITY PRIMARY KEY,
+      pasta_id       INTEGER NOT NULL REFERENCES pastas(id) ON DELETE CASCADE,
+      conta_id       INTEGER NOT NULL REFERENCES contas(id) ON DELETE RESTRICT,
+      tipo           TEXT    NOT NULL CHECK (tipo IN ('receita', 'despesa')),
+      data           TEXT    NOT NULL,
+      descricao      TEXT    NOT NULL DEFAULT '',
+      valor_centavos BIGINT  NOT NULL CHECK (valor_centavos > 0),
+      observacao     TEXT    NOT NULL DEFAULT '',
+      criado_em      TIMESTAMPTZ NOT NULL DEFAULT now()
+  )`,
+  `CREATE INDEX IF NOT EXISTS idx_lanc_data  ON lancamentos (data)`,
+  `CREATE INDEX IF NOT EXISTS idx_lanc_pasta ON lancamentos (pasta_id, data)`,
+  `CREATE INDEX IF NOT EXISTS idx_lanc_conta ON lancamentos (conta_id)`,
+];
 
 /** Pastas iniciais: os três centros de custo. */
 const PASTAS_PADRAO: Array<[string, string, string, string, number]> = [
@@ -179,26 +202,27 @@ let schemaPronto: Promise<void> | undefined;
 export function prepararBanco(): Promise<void> {
   if (!schemaPronto) {
     schemaPronto = (async () => {
-      const cliente = await bd();
-      await cliente.executeMultiple(SCHEMA);
+      for (const comando of SCHEMA) await consultar(comando);
 
-      const { rows } = await cliente.execute("SELECT COUNT(*) AS n FROM pastas");
+      const { rows } = await consultar("SELECT COUNT(*) AS n FROM pastas");
       if (Number(rows[0]?.n ?? 0) > 0) return;
 
-      for (const [nome, subtitulo, icone, cor, ordem] of PASTAS_PADRAO) {
-        await cliente.execute({
-          sql: "INSERT INTO pastas (nome, subtitulo, icone, cor, ordem) VALUES (?, ?, ?, ?, ?)",
-          args: [nome, subtitulo, icone, cor, ordem],
-        });
-      }
-      const pastas = await cliente.execute("SELECT id, nome FROM pastas");
-      const ids = new Map(pastas.rows.map((r) => [String(r.nome), Number(r.id)]));
-      for (const [pasta, codigo, nome, tipo, cor] of CONTAS_PADRAO) {
-        await cliente.execute({
-          sql: "INSERT INTO contas (pasta_id, codigo, nome, tipo, cor) VALUES (?, ?, ?, ?, ?)",
-          args: [ids.get(pasta) ?? null, codigo, nome, tipo, cor],
-        });
-      }
+      await transacao(async (q) => {
+        const ids = new Map<string, number>();
+        for (const [nome, subtitulo, icone, cor, ordem] of PASTAS_PADRAO) {
+          const criada = await q(
+            "INSERT INTO pastas (nome, subtitulo, icone, cor, ordem) VALUES (?, ?, ?, ?, ?) RETURNING id",
+            [nome, subtitulo, icone, cor, ordem],
+          );
+          ids.set(nome, Number(criada.rows[0]?.id));
+        }
+        for (const [pasta, codigo, nome, tipo, cor] of CONTAS_PADRAO) {
+          await q(
+            "INSERT INTO contas (pasta_id, codigo, nome, tipo, cor) VALUES (?, ?, ?, ?, ?)",
+            [ids.get(pasta) ?? null, codigo, nome, tipo, cor],
+          );
+        }
+      });
     })().catch((erro) => {
       schemaPronto = undefined; // permite tentar de novo na próxima requisição
       throw erro;

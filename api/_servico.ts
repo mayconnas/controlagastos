@@ -5,11 +5,17 @@
  *  - Valores em centavos (inteiro), para não existir erro de arredondamento.
  *  - O tipo (receita/despesa) e a pasta do lançamento sempre vêm da conta
  *    escolhida no plano de contas, o que impede classificação incorreta.
+ *  - As consultas são escritas com "?"; o _db.ts converte para $1, $2... do
+ *    PostgreSQL, o que mantém legível a montagem dinâmica dos filtros.
  */
 
-import type { InArgs, InValue, ResultSet, Row } from "@libsql/client";
-
-import { bd, prepararBanco } from "./_db.js";
+import {
+  UNICIDADE_VIOLADA,
+  consultar as consultarBanco,
+  prepararBanco,
+  transacao,
+  type Consulta,
+} from "./_db.js";
 import { ErroApi } from "./_erros.js";
 
 export { ErroApi };
@@ -23,24 +29,24 @@ export const MESES_PT = [
 ];
 
 type Payload = Record<string, unknown>;
+type Linha = Record<string, any>;
 
-async function consultar(sql: string, args: InArgs = []): Promise<ResultSet> {
+async function linhas(sql: string, args: unknown[] = []): Promise<Linha[]> {
   await prepararBanco();
-  return (await bd()).execute({ sql, args });
+  return (await consultarBanco(sql, args)).rows;
 }
 
-function linhas(resultado: ResultSet): Array<Record<string, any>> {
-  return resultado.rows.map((linha) => ({ ...(linha as unknown as Row) }));
+async function primeira(sql: string, args: unknown[] = []): Promise<Linha | undefined> {
+  return (await linhas(sql, args))[0];
 }
 
-function primeira(resultado: ResultSet): Record<string, any> | undefined {
-  const [linha] = linhas(resultado);
-  return linha;
+async function afetadas(sql: string, args: unknown[] = []): Promise<number> {
+  await prepararBanco();
+  return (await consultarBanco(sql, args)).rowCount;
 }
 
 function ehViolacaoDeUnicidade(erro: unknown): boolean {
-  const mensagem = erro instanceof Error ? erro.message : String(erro);
-  return /UNIQUE constraint failed/i.test(mensagem);
+  return (erro as { code?: string } | null)?.code === UNICIDADE_VIOLADA;
 }
 
 /* ------------------------------------------------------------------ */
@@ -145,8 +151,8 @@ export function rotuloMes(mes: string): string {
 /* Pastas (Corretor, Barbearia, Casa)                                  */
 /* ------------------------------------------------------------------ */
 
-export async function listarPastas() {
-  return linhas(await consultar("SELECT * FROM pastas ORDER BY ordem, nome"));
+export async function listarPastas(): Promise<Linha[]> {
+  return linhas("SELECT * FROM pastas ORDER BY ordem, nome");
 }
 
 function camposDaPasta(p: Payload) {
@@ -161,42 +167,40 @@ function camposDaPasta(p: Payload) {
 
 export async function criarPasta(p: Payload) {
   const { nome, subtitulo, icone, cor, ordem } = camposDaPasta(p);
-  let id: number;
   try {
-    const resultado = await consultar(
-      "INSERT INTO pastas (nome, subtitulo, icone, cor, ordem) VALUES (?, ?, ?, ?, ?)",
+    return await primeira(
+      "INSERT INTO pastas (nome, subtitulo, icone, cor, ordem) VALUES (?, ?, ?, ?, ?) RETURNING *",
       [nome, subtitulo, icone, cor, ordem],
     );
-    id = Number(resultado.lastInsertRowid);
   } catch (erro) {
     if (ehViolacaoDeUnicidade(erro)) {
       throw new ErroApi(`Já existe uma pasta chamada '${nome}'.`, 409);
     }
     throw erro;
   }
-  return primeira(await consultar("SELECT * FROM pastas WHERE id = ?", [id]));
 }
 
 export async function atualizarPasta(pastaId: number, p: Payload) {
   const { nome, subtitulo, icone, cor, ordem } = camposDaPasta(p);
+  let atualizada: Linha | undefined;
   try {
-    const resultado = await consultar(
-      "UPDATE pastas SET nome = ?, subtitulo = ?, icone = ?, cor = ?, ordem = ? WHERE id = ?",
+    atualizada = await primeira(
+      "UPDATE pastas SET nome = ?, subtitulo = ?, icone = ?, cor = ?, ordem = ? WHERE id = ? RETURNING *",
       [nome, subtitulo, icone, cor, ordem, pastaId],
     );
-    if (resultado.rowsAffected === 0) throw new ErroApi("Pasta não encontrada.", 404);
   } catch (erro) {
     if (ehViolacaoDeUnicidade(erro)) {
       throw new ErroApi(`Já existe uma pasta chamada '${nome}'.`, 409);
     }
     throw erro;
   }
-  return primeira(await consultar("SELECT * FROM pastas WHERE id = ?", [pastaId]));
+  if (!atualizada) throw new ErroApi("Pasta não encontrada.", 404);
+  return atualizada;
 }
 
 export async function excluirPasta(pastaId: number) {
   const usados = Number(
-    primeira(await consultar("SELECT COUNT(*) AS n FROM lancamentos WHERE pasta_id = ?", [pastaId]))?.n ?? 0,
+    (await primeira("SELECT COUNT(*) AS n FROM lancamentos WHERE pasta_id = ?", [pastaId]))?.n ?? 0,
   );
   if (usados > 0) {
     throw new ErroApi(
@@ -204,8 +208,9 @@ export async function excluirPasta(pastaId: number) {
       409,
     );
   }
-  const resultado = await consultar("DELETE FROM pastas WHERE id = ?", [pastaId]);
-  if (resultado.rowsAffected === 0) throw new ErroApi("Pasta não encontrada.", 404);
+  if ((await afetadas("DELETE FROM pastas WHERE id = ?", [pastaId])) === 0) {
+    throw new ErroApi("Pasta não encontrada.", 404);
+  }
   return { ok: true };
 }
 
@@ -215,13 +220,13 @@ export async function excluirPasta(pastaId: number) {
 
 export async function listarContas(
   opcoes: { pastaId?: number | null; tipo?: Tipo | null; incluirInativas?: boolean } = {},
-) {
+): Promise<Linha[]> {
   const sql = [
     "SELECT c.*, p.nome AS pasta_nome,",
     "       (SELECT COUNT(*) FROM lancamentos l WHERE l.conta_id = c.id) AS usos",
     "FROM contas c LEFT JOIN pastas p ON p.id = c.pasta_id WHERE 1 = 1",
   ];
-  const args: InValue[] = [];
+  const args: unknown[] = [];
   if (opcoes.pastaId) {
     sql.push("AND (c.pasta_id = ? OR c.pasta_id IS NULL)");
     args.push(opcoes.pastaId);
@@ -231,14 +236,16 @@ export async function listarContas(
     args.push(opcoes.tipo);
   }
   if (opcoes.incluirInativas === false) sql.push("AND c.ativo = 1");
-  sql.push("ORDER BY p.ordem, c.tipo DESC, c.codigo, c.nome");
-  return linhas(await consultar(sql.join(" "), args));
+  // NULLS FIRST mantém as contas de "todas as pastas" no topo, como antes.
+  sql.push("ORDER BY p.ordem NULLS FIRST, c.tipo DESC, c.codigo, c.nome");
+  return linhas(sql.join(" "), args);
 }
 
 async function exigirPasta(pastaId: number | null) {
   if (pastaId === null) return;
-  const existe = primeira(await consultar("SELECT 1 AS ok FROM pastas WHERE id = ?", [pastaId]));
-  if (!existe) throw new ErroApi("Pasta informada não existe.", 404);
+  if (!(await primeira("SELECT 1 AS ok FROM pastas WHERE id = ?", [pastaId]))) {
+    throw new ErroApi("Pasta informada não existe.", 404);
+  }
 }
 
 function camposDaConta(p: Payload) {
@@ -254,12 +261,10 @@ function camposDaConta(p: Payload) {
 
 async function contaPorId(contaId: number) {
   return primeira(
-    await consultar(
-      "SELECT c.*, p.nome AS pasta_nome, " +
-        "(SELECT COUNT(*) FROM lancamentos l WHERE l.conta_id = c.id) AS usos " +
-        "FROM contas c LEFT JOIN pastas p ON p.id = c.pasta_id WHERE c.id = ?",
-      [contaId],
-    ),
+    "SELECT c.*, p.nome AS pasta_nome, " +
+      "(SELECT COUNT(*) FROM lancamentos l WHERE l.conta_id = c.id) AS usos " +
+      "FROM contas c LEFT JOIN pastas p ON p.id = c.pasta_id WHERE c.id = ?",
+    [contaId],
   );
 }
 
@@ -267,11 +272,11 @@ export async function criarConta(p: Payload) {
   const { nome, tipo, codigo, cor, pastaId, ativo } = camposDaConta(p);
   await exigirPasta(pastaId);
   try {
-    const resultado = await consultar(
-      "INSERT INTO contas (pasta_id, codigo, nome, tipo, cor, ativo) VALUES (?, ?, ?, ?, ?, ?)",
+    const criada = await primeira(
+      "INSERT INTO contas (pasta_id, codigo, nome, tipo, cor, ativo) VALUES (?, ?, ?, ?, ?, ?) RETURNING id",
       [pastaId, codigo, nome, tipo, cor, ativo],
     );
-    return await contaPorId(Number(resultado.lastInsertRowid));
+    return await contaPorId(Number(criada?.id));
   } catch (erro) {
     if (ehViolacaoDeUnicidade(erro)) {
       throw new ErroApi(`Já existe a conta '${nome}' (${tipo}) nesta pasta.`, 409);
@@ -284,45 +289,40 @@ export async function atualizarConta(contaId: number, p: Payload) {
   const { nome, tipo, codigo, cor, pastaId, ativo } = camposDaConta(p);
   await exigirPasta(pastaId);
 
-  const atual = primeira(await consultar("SELECT tipo FROM contas WHERE id = ?", [contaId]));
+  const atual = await primeira("SELECT tipo FROM contas WHERE id = ?", [contaId]);
   if (!atual) throw new ErroApi("Conta não encontrada.", 404);
   if (atual.tipo !== tipo) {
     const usos = Number(
-      primeira(await consultar("SELECT COUNT(*) AS n FROM lancamentos WHERE conta_id = ?", [contaId]))?.n ?? 0,
+      (await primeira("SELECT COUNT(*) AS n FROM lancamentos WHERE conta_id = ?", [contaId]))?.n ?? 0,
     );
     if (usos > 0) {
       throw new ErroApi("Não é possível mudar o tipo de uma conta que já possui lançamentos.", 409);
     }
   }
 
-  await prepararBanco();
-  const transacao = await (await bd()).transaction("write");
   try {
-    await transacao.execute({
-      sql: "UPDATE contas SET pasta_id = ?, codigo = ?, nome = ?, tipo = ?, cor = ?, ativo = ? WHERE id = ?",
-      args: [pastaId, codigo, nome, tipo, cor, ativo, contaId],
+    await transacao(async (q: Consulta) => {
+      await q(
+        "UPDATE contas SET pasta_id = ?, codigo = ?, nome = ?, tipo = ?, cor = ?, ativo = ? WHERE id = ?",
+        [pastaId, codigo, nome, tipo, cor, ativo, contaId],
+      );
+      // Mantém os lançamentos coerentes com a pasta da conta.
+      if (pastaId !== null) {
+        await q("UPDATE lancamentos SET pasta_id = ? WHERE conta_id = ?", [pastaId, contaId]);
+      }
     });
-    // Mantém os lançamentos coerentes com a pasta da conta.
-    if (pastaId !== null) {
-      await transacao.execute({
-        sql: "UPDATE lancamentos SET pasta_id = ? WHERE conta_id = ?",
-        args: [pastaId, contaId],
-      });
-    }
-    await transacao.commit();
   } catch (erro) {
-    await transacao.rollback();
     if (ehViolacaoDeUnicidade(erro)) {
       throw new ErroApi(`Já existe a conta '${nome}' (${tipo}) nesta pasta.`, 409);
     }
     throw erro;
   }
-  return await contaPorId(contaId);
+  return contaPorId(contaId);
 }
 
 export async function excluirConta(contaId: number) {
   const usos = Number(
-    primeira(await consultar("SELECT COUNT(*) AS n FROM lancamentos WHERE conta_id = ?", [contaId]))?.n ?? 0,
+    (await primeira("SELECT COUNT(*) AS n FROM lancamentos WHERE conta_id = ?", [contaId]))?.n ?? 0,
   );
   if (usos > 0) {
     throw new ErroApi(
@@ -331,8 +331,9 @@ export async function excluirConta(contaId: number) {
       409,
     );
   }
-  const resultado = await consultar("DELETE FROM contas WHERE id = ?", [contaId]);
-  if (resultado.rowsAffected === 0) throw new ErroApi("Conta não encontrada.", 404);
+  if ((await afetadas("DELETE FROM contas WHERE id = ?", [contaId])) === 0) {
+    throw new ErroApi("Conta não encontrada.", 404);
+  }
   return { ok: true };
 }
 
@@ -360,9 +361,9 @@ export interface Filtros {
   ate?: string | null;
 }
 
-function montarFiltros(f: Filtros): { where: string; args: InValue[] } {
+function montarFiltros(f: Filtros): { where: string; args: unknown[] } {
   const clausulas: string[] = [];
-  const args: InValue[] = [];
+  const args: unknown[] = [];
   if (f.pastaId) {
     clausulas.push("l.pasta_id = ?");
     args.push(f.pastaId);
@@ -380,7 +381,8 @@ function montarFiltros(f: Filtros): { where: string; args: InValue[] } {
     args.push(f.contaId);
   }
   if (f.busca) {
-    clausulas.push("(l.descricao LIKE ? OR l.observacao LIKE ? OR c.nome LIKE ?)");
+    // ILIKE porque, no PostgreSQL, LIKE diferencia maiúsculas de minúsculas.
+    clausulas.push("(l.descricao ILIKE ? OR l.observacao ILIKE ? OR c.nome ILIKE ?)");
     const curinga = `%${f.busca}%`;
     args.push(curinga, curinga, curinga);
   }
@@ -403,21 +405,16 @@ export async function listarLancamentos(f: Filtros & { limite?: number; offset?:
   const limite = Math.min(f.limite ?? 200, 1000);
   const offset = f.offset ?? 0;
 
-  const itens = linhas(
-    await consultar(`${LANC_SELECT}${where} ORDER BY l.data DESC, l.id DESC LIMIT ? OFFSET ?`, [
-      ...args,
-      limite,
-      offset,
-    ]),
+  const itens = await linhas(
+    `${LANC_SELECT}${where} ORDER BY l.data DESC, l.id DESC LIMIT ? OFFSET ?`,
+    [...args, limite, offset],
   );
-  const totais = primeira(
-    await consultar(
-      "SELECT COUNT(*) AS n, " +
-        "COALESCE(SUM(CASE WHEN l.tipo = 'receita' THEN l.valor_centavos END), 0) AS receitas, " +
-        "COALESCE(SUM(CASE WHEN l.tipo = 'despesa' THEN l.valor_centavos END), 0) AS despesas " +
-        `FROM lancamentos l JOIN contas c ON c.id = l.conta_id${where}`,
-      args,
-    ),
+  const totais = await primeira(
+    "SELECT COUNT(*) AS n, " +
+      "COALESCE(SUM(CASE WHEN l.tipo = 'receita' THEN l.valor_centavos END), 0) AS receitas, " +
+      "COALESCE(SUM(CASE WHEN l.tipo = 'despesa' THEN l.valor_centavos END), 0) AS despesas " +
+      `FROM lancamentos l JOIN contas c ON c.id = l.conta_id${where}`,
+    args,
   );
   const receitas = Number(totais?.receitas ?? 0);
   const despesas = Number(totais?.despesas ?? 0);
@@ -426,8 +423,9 @@ export async function listarLancamentos(f: Filtros & { limite?: number; offset?:
 
 /** Resolve a conta e a pasta do lançamento, validando a combinação. */
 async function contaParaLancamento(contaId: number, pastaId: number | null) {
-  const conta = primeira(
-    await consultar("SELECT id, nome, tipo, pasta_id, ativo FROM contas WHERE id = ?", [contaId]),
+  const conta = await primeira(
+    "SELECT id, nome, tipo, pasta_id, ativo FROM contas WHERE id = ?",
+    [contaId],
   );
   if (!conta) throw new ErroApi("Conta do plano de contas não encontrada.", 404);
   if (!Number(conta.ativo)) throw new ErroApi(`A conta '${conta.nome}' está inativa.`);
@@ -458,33 +456,32 @@ function camposDoLancamento(p: Payload) {
 export async function criarLancamento(p: Payload) {
   const { contaId, valor, data, descricao, observacao, pastaId } = camposDoLancamento(p);
   const conta = await contaParaLancamento(contaId, pastaId);
-  const resultado = await consultar(
+  const criado = await primeira(
     "INSERT INTO lancamentos (pasta_id, conta_id, tipo, data, descricao, valor_centavos, observacao) " +
-      "VALUES (?, ?, ?, ?, ?, ?, ?)",
+      "VALUES (?, ?, ?, ?, ?, ?, ?) RETURNING id",
     [conta.pastaId, contaId, conta.tipo, data, descricao || conta.nome, valor, observacao],
   );
-  return primeira(
-    await consultar(`${LANC_SELECT} WHERE l.id = ?`, [Number(resultado.lastInsertRowid)]),
-  );
+  return primeira(`${LANC_SELECT} WHERE l.id = ?`, [Number(criado?.id)]);
 }
 
 export async function atualizarLancamento(lancId: number, p: Payload) {
   const { contaId, valor, data, descricao, observacao, pastaId } = camposDoLancamento(p);
-  const existe = primeira(await consultar("SELECT 1 AS ok FROM lancamentos WHERE id = ?", [lancId]));
-  if (!existe) throw new ErroApi("Lançamento não encontrado.", 404);
-
+  if (!(await primeira("SELECT 1 AS ok FROM lancamentos WHERE id = ?", [lancId]))) {
+    throw new ErroApi("Lançamento não encontrado.", 404);
+  }
   const conta = await contaParaLancamento(contaId, pastaId);
-  await consultar(
+  await afetadas(
     "UPDATE lancamentos SET pasta_id = ?, conta_id = ?, tipo = ?, data = ?, " +
       "descricao = ?, valor_centavos = ?, observacao = ? WHERE id = ?",
     [conta.pastaId, contaId, conta.tipo, data, descricao || conta.nome, valor, observacao, lancId],
   );
-  return primeira(await consultar(`${LANC_SELECT} WHERE l.id = ?`, [lancId]));
+  return primeira(`${LANC_SELECT} WHERE l.id = ?`, [lancId]);
 }
 
 export async function excluirLancamento(lancId: number) {
-  const resultado = await consultar("DELETE FROM lancamentos WHERE id = ?", [lancId]);
-  if (resultado.rowsAffected === 0) throw new ErroApi("Lançamento não encontrado.", 404);
+  if ((await afetadas("DELETE FROM lancamentos WHERE id = ?", [lancId])) === 0) {
+    throw new ErroApi("Lançamento não encontrado.", 404);
+  }
   return { ok: true };
 }
 
@@ -493,8 +490,8 @@ export async function excluirLancamento(lancId: number) {
 /* ------------------------------------------------------------------ */
 
 export async function mesesDisponiveis() {
-  const encontrados = linhas(
-    await consultar("SELECT DISTINCT substr(data, 1, 7) AS mes FROM lancamentos ORDER BY mes DESC"),
+  const encontrados = (
+    await linhas("SELECT DISTINCT substr(data, 1, 7) AS mes FROM lancamentos ORDER BY mes DESC")
   ).map((r) => String(r.mes));
   const atual = hojeISO().slice(0, 7);
   if (!encontrados.includes(atual)) encontrados.unshift(atual);
@@ -502,8 +499,8 @@ export async function mesesDisponiveis() {
 }
 
 export async function anosDisponiveis() {
-  const encontrados = linhas(
-    await consultar("SELECT DISTINCT substr(data, 1, 4) AS ano FROM lancamentos ORDER BY ano DESC"),
+  const encontrados = (
+    await linhas("SELECT DISTINCT substr(data, 1, 4) AS ano FROM lancamentos ORDER BY ano DESC")
   ).map((r) => Number(r.ano));
   const atual = new Date().getFullYear();
   if (!encontrados.includes(atual)) encontrados.unshift(atual);
@@ -512,13 +509,11 @@ export async function anosDisponiveis() {
 
 async function totais(pastaId: number | null, mes: string | null) {
   const { where, args } = montarFiltros({ pastaId, mes });
-  const linha = primeira(
-    await consultar(
-      "SELECT COALESCE(SUM(CASE WHEN l.tipo = 'receita' THEN l.valor_centavos END), 0) AS receitas, " +
-        "COALESCE(SUM(CASE WHEN l.tipo = 'despesa' THEN l.valor_centavos END), 0) AS despesas " +
-        `FROM lancamentos l${where}`,
-      args,
-    ),
+  const linha = await primeira(
+    "SELECT COALESCE(SUM(CASE WHEN l.tipo = 'receita' THEN l.valor_centavos END), 0) AS receitas, " +
+      "COALESCE(SUM(CASE WHEN l.tipo = 'despesa' THEN l.valor_centavos END), 0) AS despesas " +
+      `FROM lancamentos l${where}`,
+    args,
   );
   const receitas = Number(linha?.receitas ?? 0);
   const despesas = Number(linha?.despesas ?? 0);
@@ -528,13 +523,13 @@ async function totais(pastaId: number | null, mes: string | null) {
 /** Total por conta do plano de contas, com percentual sobre o total. */
 export async function categorias(pastaId: number | null, mes: string | null, tipo: Tipo = "despesa") {
   const { where, args } = montarFiltros({ pastaId, mes, tipo });
-  const itens: Array<Record<string, any>> = linhas(
-    await consultar(
+  const itens: Linha[] = (
+    await linhas(
       "SELECT c.id, c.nome, c.codigo, c.cor, SUM(l.valor_centavos) AS total " +
         `FROM lancamentos l JOIN contas c ON c.id = l.conta_id${where} ` +
         "GROUP BY c.id ORDER BY total DESC",
       args,
-    ),
+    )
   ).map((linha) => ({ ...linha, total: Number(linha.total) }));
 
   const total = itens.reduce((soma, item) => soma + Number(item.total), 0);
@@ -554,12 +549,10 @@ export async function painel(mesPedido?: unknown) {
     const pastaId = Number(pasta.id);
     const totalDaPasta = await totais(pastaId, mes);
     Object.assign(pasta, totalDaPasta);
-    pasta.ultimos = linhas(
-      await consultar(
-        `${LANC_SELECT} WHERE l.pasta_id = ? AND substr(l.data, 1, 7) = ? ` +
-          "ORDER BY l.data DESC, l.id DESC LIMIT 6",
-        [pastaId, mes],
-      ),
+    pasta.ultimos = await linhas(
+      `${LANC_SELECT} WHERE l.pasta_id = ? AND substr(l.data, 1, 7) = ? ` +
+        "ORDER BY l.data DESC, l.id DESC LIMIT 6",
+      [pastaId, mes],
     );
     pasta.categorias = await categorias(pastaId, mes, "despesa");
     geral.receitas += totalDaPasta.receitas;
@@ -575,16 +568,16 @@ export async function relatorioMensal(ano?: number | null, pastaId?: number | nu
   const { where, args } = montarFiltros({ pastaId });
   const conector = where ? " AND " : " WHERE ";
   const encontrados = new Map(
-    linhas(
-      await consultar(
+    (
+      await linhas(
         "SELECT substr(l.data, 1, 7) AS mes, " +
           "COALESCE(SUM(CASE WHEN l.tipo = 'receita' THEN l.valor_centavos END), 0) AS receitas, " +
           "COALESCE(SUM(CASE WHEN l.tipo = 'despesa' THEN l.valor_centavos END), 0) AS despesas " +
           `FROM lancamentos l JOIN contas c ON c.id = l.conta_id${where}${conector}` +
-          "substr(l.data, 1, 4) = ? GROUP BY mes ORDER BY mes",
+          "substr(l.data, 1, 4) = ? GROUP BY substr(l.data, 1, 7) ORDER BY mes",
         [...args, String(anoAlvo)],
-      ),
-    ).map((linha) => [String(linha.mes), linha]),
+      )
+    ).map((linha) => [String(linha.mes), linha] as const),
   );
 
   const meses = [];
@@ -630,7 +623,7 @@ export async function relatorioComparativo(mes: string | null) {
 /** Extrato em CSV com separador ';', que o Excel brasileiro abre direto. */
 export async function exportarCsv(f: Filtros) {
   const { where, args } = montarFiltros(f);
-  const itens = linhas(await consultar(`${LANC_SELECT}${where} ORDER BY l.data, l.id`, args));
+  const itens = await linhas(`${LANC_SELECT}${where} ORDER BY l.data, l.id`, args);
 
   const escapar = (valor: unknown) => {
     const texto = String(valor ?? "");

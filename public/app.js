@@ -152,8 +152,9 @@ function desenharAvisoArmazenamento() {
       <div>
         <span class="titulo">Falta conectar o banco de dados.</span>
         <span>O site está no ar, mas ainda não tem onde guardar os lançamentos. Na Vercel,
-        abra a aba <b>Storage</b> do projeto, adicione o <b>Turso</b> pelo Marketplace e
-        clique em <b>Redeploy</b> — as variáveis de ambiente são configuradas sozinhas.</span>
+        abra a aba <b>Storage</b>, clique no seu banco <b>Neon</b>, use o botão
+        <b>Connect to Project</b> e depois clique em <b>Redeploy</b> — a variável de
+        ambiente é configurada sozinha.</span>
       </div>
     </div>`;
 }
@@ -167,15 +168,14 @@ function desenharSemBanco() {
     <div class="box">
       <header><h4>Como conectar o banco</h4></header>
       <ol class="passos">
-        <li>No painel da Vercel, abra este projeto e vá na aba <b>Storage</b>.</li>
-        <li>Clique em <b>Browse Marketplace</b> e role a lista até encontrar o <b>Turso</b>
-            (é o SQLite hospedado — o mesmo banco que o app já usa).</li>
-        <li>Crie o banco e conecte-o a este projeto.</li>
+        <li>No painel da Vercel, abra a aba <b>Storage</b> e clique no seu banco <b>Neon</b>.</li>
+        <li>Clique em <b>Connect to Project</b> e escolha este projeto.</li>
         <li>Volte em <b>Deployments</b> e clique em <b>Redeploy</b> no deploy mais recente.</li>
       </ol>
-      <p class="nota">A Vercel cadastra as variáveis de ambiente sozinha — não há nada
-      para copiar e colar. Assim que o Redeploy terminar, esta tela vira o painel de
-      finanças, já com as pastas Corretor, Barbearia e Casa e o plano de contas inicial.</p>
+      <p class="nota">A Vercel cadastra a variável <code>DATABASE_URL</code> sozinha — não há
+      nada para copiar e colar. O Redeploy é necessário porque variáveis novas só valem a
+      partir do próximo deploy. Assim que ele terminar, esta tela vira o painel de finanças,
+      já com as pastas Corretor, Barbearia e Casa e o plano de contas inicial.</p>
     </div>`;
 }
 

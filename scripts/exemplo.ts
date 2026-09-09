@@ -5,7 +5,7 @@
  *   npm run exemplo 2025-08    # usa o mês informado
  */
 
-import { bd, prepararBanco } from "../api/_db.js";
+import { consultar, prepararBanco } from "../api/_db.js";
 import { criarLancamento, hojeISO, rotuloMes, validarMes } from "../api/_servico.js";
 
 const EXEMPLOS: Array<[string, string, number, string, number]> = [
@@ -40,10 +40,10 @@ const EXEMPLOS: Array<[string, string, number, string, number]> = [
 const mes = validarMes(process.argv[2]) ?? hojeISO().slice(0, 7);
 await prepararBanco();
 
-const { rows } = await (await bd()).execute(
+const { rows } = await consultar(
   "SELECT c.id, c.nome, p.nome AS pasta FROM contas c JOIN pastas p ON p.id = c.pasta_id",
 );
-const contas = new Map(rows.map((r) => [`${r.pasta}|${r.nome}`, Number(r.id)]));
+const contas = new Map(rows.map((r: Record<string, any>) => [`${r.pasta}|${r.nome}`, Number(r.id)]));
 
 let criados = 0;
 for (const [pasta, conta, dia, descricao, valor] of EXEMPLOS) {

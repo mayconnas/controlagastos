@@ -6,11 +6,9 @@ async function carregar() {
   return import("../api/_db.js");
 }
 
-const VARIAVEIS = [
-  "VERCEL", "FINANCAS_DB",
-  "TURSO_DATABASE_URL", "TURSO_URL", "LIBSQL_URL", "DATABASE_URL",
-  "TURSO_AUTH_TOKEN", "TURSO_TOKEN", "LIBSQL_AUTH_TOKEN", "DATABASE_AUTH_TOKEN",
-];
+const VARIAVEIS = ["VERCEL", "DATABASE_URL", "POSTGRES_URL", "PGURL", "DATABASE_URL_UNPOOLED"];
+const NEON = "postgres://usuario:senha@ep-bole-xylophone.sa-east-1.aws.neon.tech/neondb?sslmode=require";
+const LOCAL = "postgres://postgres@localhost:5433/financas_teste";
 
 beforeEach(() => {
   for (const nome of VARIAVEIS) delete process.env[nome];
@@ -20,13 +18,7 @@ afterEach(() => {
 });
 
 describe("escolha do armazenamento", () => {
-  it("na sua máquina, sem nada configurado, usa o arquivo local", async () => {
-    const bd = await carregar();
-    expect(bd.modoArmazenamento()).toBe("local");
-  });
-
-  it("na Vercel sem banco conectado, informa que não há banco", async () => {
-    process.env.VERCEL = "1";
+  it("sem nada configurado, informa que não há banco", async () => {
     const bd = await carregar();
     expect(bd.modoArmazenamento()).toBe("sem-banco");
   });
@@ -40,47 +32,57 @@ describe("escolha do armazenamento", () => {
     });
   });
 
-  it("com Turso, usa a entrada 'web' do cliente, sem binário nativo", async () => {
-    process.env.VERCEL = "1";
-    process.env.TURSO_DATABASE_URL = "libsql://exemplo.turso.io";
-    process.env.TURSO_AUTH_TOKEN = "token";
+  it("reconhece o Neon", async () => {
+    process.env.DATABASE_URL = NEON;
     const bd = await carregar();
-    // Criar o cliente não pode carregar o pacote nativo 'libsql'.
-    const cliente = await bd.bd();
-    expect(cliente).toBeDefined();
-    expect(typeof cliente.execute).toBe("function");
+    expect(bd.modoArmazenamento()).toBe("neon");
   });
 
-  it("reconhece o Turso pelos nomes de variável mais comuns", async () => {
-    for (const nome of ["TURSO_DATABASE_URL", "TURSO_URL", "LIBSQL_URL", "DATABASE_URL"]) {
+  it("reconhece um PostgreSQL local", async () => {
+    process.env.DATABASE_URL = LOCAL;
+    const bd = await carregar();
+    expect(bd.modoArmazenamento()).toBe("local");
+  });
+
+  it("aceita os nomes de variável que a Vercel pode injetar", async () => {
+    for (const nome of VARIAVEIS.filter((v) => v !== "VERCEL")) {
       for (const outro of VARIAVEIS) delete process.env[outro];
-      process.env.VERCEL = "1";
-      process.env[nome] = "libsql://controla-gastos.turso.io";
+      process.env[nome] = NEON;
       const bd = await carregar();
-      expect(bd.modoArmazenamento(), `variável ${nome}`).toBe("turso");
+      expect(bd.modoArmazenamento(), `variável ${nome}`).toBe("neon");
     }
   });
 
-  it("reconhece o token pelos nomes mais comuns", async () => {
-    for (const nome of ["TURSO_AUTH_TOKEN", "TURSO_TOKEN", "LIBSQL_AUTH_TOKEN"]) {
+  it("ignora URL que não seja de PostgreSQL", async () => {
+    for (const url of ["libsql://exemplo.turso.io", "mysql://servidor/banco", "redis://servidor"]) {
       for (const outro of VARIAVEIS) delete process.env[outro];
-      process.env[nome] = "token-de-teste";
+      process.env.DATABASE_URL = url;
       const bd = await carregar();
-      expect(bd.tokenRemoto(), `variável ${nome}`).toBe("token-de-teste");
+      expect(bd.modoArmazenamento(), url).toBe("sem-banco");
     }
-  });
-
-  it("ignora DATABASE_URL que não seja de SQLite (ex.: Postgres)", async () => {
-    process.env.VERCEL = "1";
-    process.env.DATABASE_URL = "postgres://usuario:senha@servidor/banco";
-    const bd = await carregar();
-    expect(bd.modoArmazenamento()).toBe("sem-banco");
   });
 
   it("ignora variável vazia", async () => {
-    process.env.VERCEL = "1";
-    process.env.TURSO_DATABASE_URL = "   ";
+    process.env.DATABASE_URL = "   ";
     const bd = await carregar();
     expect(bd.modoArmazenamento()).toBe("sem-banco");
+  });
+});
+
+describe("TLS", () => {
+  it("exige certificado válido no Neon", async () => {
+    const bd = await carregar();
+    expect(bd.configuracaoSsl(NEON)).toEqual({ rejectUnauthorized: true });
+  });
+
+  it("dispensa TLS num PostgreSQL local, que não tem certificado", async () => {
+    const bd = await carregar();
+    expect(bd.configuracaoSsl(LOCAL)).toBe(false);
+    expect(bd.configuracaoSsl("postgres://postgres@127.0.0.1:5433/banco")).toBe(false);
+  });
+
+  it("respeita sslmode=disable", async () => {
+    const bd = await carregar();
+    expect(bd.configuracaoSsl("postgres://u@servidor.com/banco?sslmode=disable")).toBe(false);
   });
 });

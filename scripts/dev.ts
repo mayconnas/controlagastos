@@ -61,8 +61,8 @@ if (modo === "sem-banco") {
 }
 
 const NOMES_DO_MODO = {
-  turso: "Turso (nuvem)",
-  local: "arquivo local",
+  neon: "Neon (Postgres na nuvem)",
+  local: "PostgreSQL local",
   "sem-banco": "nenhum (falta conectar)",
 } as const;
 
