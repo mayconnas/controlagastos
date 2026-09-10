@@ -51,12 +51,24 @@ a { color: var(--azul); }
   border-radius: 5px; font-size: 12px; color: var(--texto);
 }
 
-/* Sem banco conectado: some com o que não tem função nenhuma ainda. */
-body.sem-banco .menu,
-body.sem-banco .resumo-geral,
-body.sem-banco .seletor-mes,
-body.sem-banco #btn-nova-pasta { display: none; }
-body.sem-banco .painel { grid-template-columns: 1fr; }
+/* Antes de entrar: some com o que ainda não tem função nenhuma. */
+body.sem-sessao .menu,
+body.sem-sessao .resumo-geral,
+body.sem-sessao .seletor-mes,
+body.sem-sessao #btn-nova-pasta,
+body.sem-sessao #usuario { display: none; }
+body.sem-sessao .painel { grid-template-columns: 1fr; }
+
+/* ---------- Usuário e login ---------- */
+#usuario { display: flex; align-items: center; gap: 10px; }
+#usuario .email {
+  color: var(--texto-2); font-size: 12px; max-width: 190px;
+  overflow: hidden; text-overflow: ellipsis; white-space: nowrap;
+}
+.caixa-login { max-width: 420px; margin: 30px auto; }
+.caixa-login form { display: flex; flex-direction: column; gap: 14px; }
+.acoes-login { display: flex; gap: 10px; }
+.acoes-login .btn { flex: 1; }
 
 /* ---------- Cabecalho ---------- */
 .topo {

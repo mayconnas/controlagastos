@@ -6,11 +6,11 @@
     "lib": ["ES2022", "DOM"],
     "strict": true,
     "noUncheckedIndexedAccess": true,
+    "allowJs": true,
     "esModuleInterop": true,
     "skipLibCheck": true,
-    "resolveJsonModule": true,
     "noEmit": true,
     "types": ["node"]
   },
-  "include": ["api", "scripts", "tests"]
+  "include": ["tests", "scripts", "public/calculos.js"]
 }

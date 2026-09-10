@@ -1,17 +1,23 @@
-/* Minhas Financas - interface (JavaScript puro, sem dependencias) */
+/* Minhas Finanças — interface (JavaScript puro, sem framework) */
+
+import * as dados from "./dados.js";
+import {
+  anosDisponiveis, dataBR, evolucaoMensal, filtrar, hojeISO, mesDe, mesesDisponiveis,
+  moeda, paraCentavos, paraCsv, porConta, rotuloMes, totalizar,
+} from "./calculos.js";
 
 const estado = {
+  sessao: null,
   mes: null,
   meses: [],
   anos: [],
   pastas: [],
+  contas: [],
+  lancamentos: [],
   pastaId: null,
   aba: "visao",
-  painel: null,
-  contas: [],
   filtros: { busca: "", conta: "", de: "", ate: "" },
   relatorio: { escopo: "pasta", ano: new Date().getFullYear() },
-  armazenamento: "local",
 };
 
 /* ------------------------------------------------------------------ */
@@ -26,28 +32,8 @@ function esc(texto) {
   ));
 }
 
-function moeda(centavos) {
-  return "R$ " + (Number(centavos || 0) / 100).toLocaleString("pt-BR", {
-    minimumFractionDigits: 2, maximumFractionDigits: 2,
-  });
-}
-
-function dataBR(iso) {
-  if (!iso) return "";
-  const [a, m, d] = iso.split("-");
-  return `${d}/${m}/${a}`;
-}
-
-function hoje() {
-  const d = new Date();
-  return `${d.getFullYear()}-${String(d.getMonth() + 1).padStart(2, "0")}-${String(d.getDate()).padStart(2, "0")}`;
-}
-
 const ICONES_PASTA = { corretor: "🧑‍💼", barbearia: "💈", casa: "🏡", folder: "📁" };
-
-function iconePasta(pasta) {
-  return ICONES_PASTA[pasta.icone] || pasta.icone || "📁";
-}
+const iconePasta = (pasta) => ICONES_PASTA[pasta.icone] || pasta.icone || "📁";
 
 const PALAVRAS_ICONE = [
   [/combust|gasolin|posto/i, "⛽"], [/marketing|anunc|public/i, "📢"],
@@ -70,64 +56,123 @@ function aviso(texto, tipo = "ok") {
   div.className = `aviso ${tipo}`;
   div.textContent = texto;
   $("#avisos").appendChild(div);
-  setTimeout(() => div.remove(), 4200);
+  setTimeout(() => div.remove(), 4600);
 }
 
-async function chamar(url, opcoes = {}) {
-  const resposta = await fetch(url, {
-    headers: { "Content-Type": "application/json" },
-    ...opcoes,
-    body: opcoes.body ? JSON.stringify(opcoes.body) : undefined,
+const pastaAtual = () => estado.pastas.find((p) => p.id === estado.pastaId) || estado.pastas[0];
+
+/** Lançamentos de uma pasta no mês selecionado. */
+const doMes = (pastaId) => filtrar(estado.lancamentos, { pastaId, mes: estado.mes });
+
+function contasDaPasta(pastaId, tipo, somenteAtivas = false) {
+  return estado.contas.filter((c) =>
+    c.pasta_id === pastaId && (!tipo || c.tipo === tipo) && (!somenteAtivas || c.ativo));
+}
+
+/* ------------------------------------------------------------------ */
+/* Entrada no app                                                      */
+/* ------------------------------------------------------------------ */
+
+async function iniciar() {
+  if (!dados.configurado()) return telaConfiguracao();
+
+  const sessao = await dados.sessaoAtual();
+  estado.sessao = sessao;
+  if (sessao) await entrou();
+  else telaLogin();
+
+  dados.aoMudarAutenticacao(async (nova) => {
+    const antes = estado.sessao?.user?.id ?? null;
+    const agora = nova?.user?.id ?? null;
+    if (antes === agora) return; // só renovação de token, não troca de usuário
+    estado.sessao = nova;
+    if (agora) await entrou();
+    else telaLogin();
   });
-  const dados = await resposta.json().catch(() => ({}));
-  if (!resposta.ok) throw new Error(dados.erro || "Falha na comunicacao com o servidor.");
-  return dados;
 }
 
-function pastaAtual() {
-  return estado.pastas.find((p) => p.id === estado.pastaId) || estado.pastas[0];
-}
-
-function painelDaPasta() {
-  return (estado.painel?.pastas || []).find((p) => p.id === estado.pastaId);
-}
-
-/* ------------------------------------------------------------------ */
-/* Carga de dados                                                      */
-/* ------------------------------------------------------------------ */
-
-async function carregarTudo() {
-  const status = await chamar("/api/status").catch(() => ({ armazenamento: "local" }));
-  estado.armazenamento = status.armazenamento;
-
-  // Sem banco conectado não há o que carregar: mostramos as instruções em vez
-  // de tentar buscar dados e encher a tela de erro.
-  if (estado.armazenamento === "sem-banco") {
-    desenharAvisoArmazenamento();
-    desenharSemBanco();
-    return;
+async function entrou() {
+  document.body.classList.remove("sem-sessao");
+  try {
+    await dados.prepararContaNova();
+    await recarregar();
+  } catch (erro) {
+    aviso(erro.message, "erro");
   }
+}
 
-  const periodos = await chamar("/api/meses");
-  estado.meses = periodos.meses;
-  estado.anos = periodos.anos;
+async function recarregar() {
+  const { pastas, contas, lancamentos } = await dados.carregarTudo();
+  estado.pastas = pastas;
+  estado.contas = contas;
+  estado.lancamentos = lancamentos;
+  estado.meses = mesesDisponiveis(lancamentos);
+  estado.anos = anosDisponiveis(lancamentos);
+
   if (!estado.mes || !estado.meses.some((m) => m.valor === estado.mes)) {
     estado.mes = estado.meses[0].valor;
   }
   if (!estado.anos.includes(estado.relatorio.ano)) estado.relatorio.ano = estado.anos[0];
-
-  estado.painel = await chamar(`/api/painel?mes=${estado.mes}`);
-  estado.pastas = estado.painel.pastas;
   if (!estado.pastas.some((p) => p.id === estado.pastaId)) {
     estado.pastaId = estado.pastas[0]?.id ?? null;
   }
-  const { contas } = await chamar("/api/contas");
-  estado.contas = contas;
   desenhar();
 }
 
-async function recarregar() {
-  await carregarTudo();
+/* ------------------------------------------------------------------ */
+/* Telas de configuração e login                                       */
+/* ------------------------------------------------------------------ */
+
+function limparMoldura() {
+  $("#abas-pastas").innerHTML = "";
+  $("#menu").innerHTML = "";
+  $("#resumo-geral").innerHTML = "";
+  $("#aviso-armazenamento").innerHTML = "";
+}
+
+function telaConfiguracao() {
+  document.body.classList.add("sem-sessao");
+  limparMoldura();
+  $("#conteudo").innerHTML = `
+    <div class="box">
+      <header><h4>Falta ligar o app ao seu Supabase</h4></header>
+      <ol class="passos">
+        <li>No painel do Supabase, abra <b>Project Settings → Data API</b>.</li>
+        <li>Copie o <b>Project URL</b> e a chave <b>anon public</b>.</li>
+        <li>No projeto, edite o arquivo <code>public/config.js</code> e cole os dois valores.</li>
+        <li>No SQL Editor do Supabase, execute o arquivo <code>supabase/schema.sql</code>.</li>
+        <li>Publique de novo na Vercel.</li>
+      </ol>
+      <p class="nota">A chave <b>anon</b> é feita para ficar visível no navegador — quem
+      protege os dados é o login e o RLS do banco. Nunca use aqui a chave
+      <code>service_role</code>.</p>
+    </div>`;
+}
+
+function telaLogin() {
+  document.body.classList.add("sem-sessao");
+  limparMoldura();
+  $("#conteudo").innerHTML = `
+    <div class="box caixa-login">
+      <header><h4>Entrar</h4></header>
+      <form id="form-login">
+        <div class="campo">
+          <label for="login-email">E-mail</label>
+          <input id="login-email" name="email" type="email" required autocomplete="email">
+        </div>
+        <div class="campo">
+          <label for="login-senha">Senha</label>
+          <input id="login-senha" name="senha" type="password" required minlength="6"
+                 autocomplete="current-password">
+        </div>
+        <div class="acoes-login">
+          <button type="submit" class="btn entrada" data-acao="entrar">Entrar</button>
+          <button type="submit" class="btn claro" data-acao="cadastrar">Criar conta</button>
+        </div>
+        <p class="nota">Seus lançamentos ficam visíveis só para quem entrar com este e-mail.</p>
+      </form>
+    </div>`;
+  $("#login-email").focus();
 }
 
 /* ------------------------------------------------------------------ */
@@ -135,7 +180,7 @@ async function recarregar() {
 /* ------------------------------------------------------------------ */
 
 function desenhar() {
-  desenharAvisoArmazenamento();
+  desenharCabecalho();
   desenharSeletorMes();
   desenharAbasPastas();
   desenharMenu();
@@ -143,45 +188,16 @@ function desenhar() {
   desenharResumoGeral();
 }
 
-function desenharAvisoArmazenamento() {
-  const area = $("#aviso-armazenamento");
-  if (estado.armazenamento !== "sem-banco") { area.innerHTML = ""; return; }
-  area.innerHTML = `
-    <div class="faixa-alerta">
-      <span class="ic">⚠️</span>
-      <div>
-        <span class="titulo">Falta conectar o banco de dados.</span>
-        <span>O site está no ar, mas ainda não tem onde guardar os lançamentos. Na Vercel,
-        abra a aba <b>Storage</b>, clique no seu banco <b>Neon</b>, use o botão
-        <b>Connect to Project</b> e depois clique em <b>Redeploy</b> — a variável de
-        ambiente é configurada sozinha.</span>
-      </div>
-    </div>`;
-}
-
-function desenharSemBanco() {
-  document.body.classList.add("sem-banco");
-  $("#abas-pastas").innerHTML = "";
-  $("#menu").innerHTML = "";
-  $("#resumo-geral").innerHTML = "";
-  $("#conteudo").innerHTML = `
-    <div class="box">
-      <header><h4>Como conectar o banco</h4></header>
-      <ol class="passos">
-        <li>No painel da Vercel, abra a aba <b>Storage</b> e clique no seu banco <b>Neon</b>.</li>
-        <li>Clique em <b>Connect to Project</b> e escolha este projeto.</li>
-        <li>Volte em <b>Deployments</b> e clique em <b>Redeploy</b> no deploy mais recente.</li>
-      </ol>
-      <p class="nota">A Vercel cadastra a variável <code>DATABASE_URL</code> sozinha — não há
-      nada para copiar e colar. O Redeploy é necessário porque variáveis novas só valem a
-      partir do próximo deploy. Assim que ele terminar, esta tela vira o painel de finanças,
-      já com as pastas Corretor, Barbearia e Casa e o plano de contas inicial.</p>
-    </div>`;
+function desenharCabecalho() {
+  const email = estado.sessao?.user?.email ?? "";
+  $("#usuario").innerHTML = email
+    ? `<span class="email" title="${esc(email)}">${esc(email)}</span>
+       <button class="btn claro mini" id="btn-sair">Sair</button>`
+    : "";
 }
 
 function desenharSeletorMes() {
-  const sel = $("#filtro-mes");
-  sel.innerHTML = estado.meses
+  $("#filtro-mes").innerHTML = estado.meses
     .map((m) => `<option value="${m.valor}" ${m.valor === estado.mes ? "selected" : ""}>${esc(m.rotulo)}</option>`)
     .join("");
 }
@@ -229,26 +245,32 @@ function desenharConteudo() {
     return;
   }
   const telas = {
-    visao: telaVisao, entradas: () => telaLancamentos("receita"),
+    visao: telaVisao,
+    entradas: () => telaLancamentos("receita"),
     despesas: () => telaLancamentos("despesa"),
-    contas: telaPlanoDeContas, relatorios: telaRelatorios,
+    contas: telaPlanoDeContas,
+    relatorios: telaRelatorios,
   };
   alvo.innerHTML = telas[estado.aba]();
-  if (estado.aba === "entradas" || estado.aba === "despesas") carregarLista(estado.aba === "entradas" ? "receita" : "despesa");
-  if (estado.aba === "relatorios") carregarRelatorios();
+  if (estado.aba === "entradas") desenharLista("receita");
+  if (estado.aba === "despesas") desenharLista("despesa");
+  if (estado.aba === "relatorios") desenharRelatorios();
 }
 
 /* ---------------------------- Visão geral --------------------------- */
 
 function telaVisao() {
-  const p = painelDaPasta();
-  if (!p) return "";
-  const cat = p.categorias;
+  const pasta = pastaAtual();
+  const doPeriodo = doMes(pasta.id);
+  const t = totalizar(doPeriodo);
+  const cat = porConta(doPeriodo, "despesa");
+  const ultimos = doPeriodo.slice(0, 6);
+
   return `
     <div class="grade-kpi">
-      ${cartaoKpi("entrada", "↗", "Entradas", p.receitas, "pos")}
-      ${cartaoKpi("saida", "↘", "Despesas", p.despesas, "neg")}
-      ${cartaoKpi("saldo", "👛", "Saldo do Mês", p.saldo, p.saldo >= 0 ? "pos" : "neg")}
+      ${cartaoKpi("entrada", "↗", "Entradas", t.receitas, "pos")}
+      ${cartaoKpi("saida", "↘", "Despesas", t.despesas, "neg")}
+      ${cartaoKpi("saldo", "👛", "Saldo do Mês", t.saldo, t.saldo >= 0 ? "pos" : "neg")}
     </div>
     <div class="colunas">
       <div class="box">
@@ -273,7 +295,7 @@ function telaVisao() {
           <h4>Últimos Lançamentos</h4>
           <button class="link" data-aba="despesas">Ver todos</button>
         </header>
-        ${listaLancamentos(p.ultimos)}
+        ${listaLancamentos(ultimos)}
       </div>
     </div>`;
 }
@@ -290,7 +312,7 @@ function cartaoKpi(classe, icone, rotulo, valor, cor) {
 }
 
 function listaLancamentos(itens) {
-  if (!itens || !itens.length) return `<p class="vazio">Nenhum lançamento neste mês.</p>`;
+  if (!itens.length) return `<p class="vazio">Nenhum lançamento neste mês.</p>`;
   return `<div class="lista">${itens.map((l) => `
     <div class="linha">
       <div class="ic" style="background:${esc(l.conta_cor)}22">${iconeConta(l.conta_nome, l.tipo)}</div>
@@ -305,8 +327,9 @@ function listaLancamentos(itens) {
 }
 
 function rosca(cat) {
-  if (!cat || !cat.total) return `<p class="vazio">Sem despesas lançadas neste mês.</p>`;
-  const raio = 54, circ = 2 * Math.PI * raio;
+  if (!cat.total) return `<p class="vazio">Sem lançamentos deste tipo no mês.</p>`;
+  const raio = 54;
+  const circ = 2 * Math.PI * raio;
   let acumulado = 0;
   const fatias = cat.itens.map((it) => {
     const fracao = it.total / cat.total;
@@ -366,7 +389,7 @@ function telaLancamentos(tipo) {
           <select id="f-conta">
             <option value="">Todas</option>
             ${contas.map((c) => `<option value="${c.id}" ${String(estado.filtros.conta) === String(c.id) ? "selected" : ""}>
-              ${esc(c.codigo ? c.codigo + " — " : "")}${esc(c.nome)}</option>`).join("")}
+              ${esc(c.codigo ? `${c.codigo} — ` : "")}${esc(c.nome)}</option>`).join("")}
           </select>
         </div>
         <div class="campo curto">
@@ -378,71 +401,61 @@ function telaLancamentos(tipo) {
         <button class="btn claro" id="f-limpar">Limpar</button>
       </div>
     </div>
-    <div class="box" id="area-lista"><p class="vazio">Carregando…</p></div>`;
+    <div class="box" id="area-lista"></div>`;
 }
 
-function parametrosLista(tipo, comMes = true) {
-  const p = new URLSearchParams({ pasta: estado.pastaId, tipo });
+function lancamentosFiltrados(tipo) {
   const f = estado.filtros;
-  if (comMes && !f.de && !f.ate) p.set("mes", estado.mes);
-  if (f.busca) p.set("busca", f.busca);
-  if (f.conta) p.set("conta", f.conta);
-  if (f.de) p.set("de", f.de);
-  if (f.ate) p.set("ate", f.ate);
-  return p;
+  return filtrar(estado.lancamentos, {
+    pastaId: estado.pastaId,
+    tipo,
+    mes: estado.mes,
+    contaId: f.conta || null,
+    busca: f.busca,
+    de: f.de,
+    ate: f.ate,
+  });
 }
 
-async function carregarLista(tipo) {
+function desenharLista(tipo) {
   const area = $("#area-lista");
   if (!area) return;
-  try {
-    const dados = await chamar("/api/lancamentos?" + parametrosLista(tipo).toString());
-    const total = tipo === "receita" ? dados.receitas : dados.despesas;
-    area.innerHTML = `
-      <header>
-        <h4>${dados.total} lançamento(s)</h4>
-        <strong class="${tipo === "receita" ? "pos" : "neg"}">${moeda(total)}</strong>
-      </header>
-      ${dados.itens.length ? `
-      <div class="tabela-rolagem"><table>
-        <thead><tr>
-          <th>Data</th><th>Descrição</th><th>Conta (plano de contas)</th>
-          <th class="num">Valor</th><th class="num">Ações</th>
-        </tr></thead>
-        <tbody>${dados.itens.map((l) => `
-          <tr>
-            <td>${dataBR(l.data)}</td>
-            <td>${esc(l.descricao)}${l.observacao ? `<br><small style="color:var(--texto-3)">${esc(l.observacao)}</small>` : ""}</td>
-            <td><span class="ponto" style="display:inline-block;width:8px;height:8px;border-radius:50%;background:${esc(l.conta_cor)};margin-right:7px"></span>
-                ${esc(l.conta_codigo ? l.conta_codigo + " — " : "")}${esc(l.conta_nome)}</td>
-            <td class="num ${l.tipo === "receita" ? "pos" : "neg"}">${moeda(l.valor_centavos)}</td>
-            <td class="num">
-              <button class="btn mini claro" data-editar-lanc="${l.id}">Editar</button>
-              <button class="btn mini perigo" data-excluir-lanc="${l.id}">Excluir</button>
-            </td>
-          </tr>`).join("")}</tbody>
-      </table></div>` : `<p class="vazio">Nenhum lançamento encontrado com esses filtros.</p>`}`;
-    area.dataset.itens = JSON.stringify(dados.itens);
-  } catch (e) {
-    area.innerHTML = `<p class="vazio">${esc(e.message)}</p>`;
-  }
-}
+  const itens = lancamentosFiltrados(tipo);
+  const t = totalizar(itens);
+  const total = tipo === "receita" ? t.receitas : t.despesas;
 
-function contasDaPasta(pastaId, tipo, somenteAtivas = false) {
-  return estado.contas.filter((c) =>
-    (c.pasta_id === pastaId || c.pasta_id === null) &&
-    (!tipo || c.tipo === tipo) &&
-    (!somenteAtivas || c.ativo));
+  area.innerHTML = `
+    <header>
+      <h4>${itens.length} lançamento(s)</h4>
+      <strong class="${tipo === "receita" ? "pos" : "neg"}">${moeda(total)}</strong>
+    </header>
+    ${itens.length ? `
+    <div class="tabela-rolagem"><table>
+      <thead><tr>
+        <th>Data</th><th>Descrição</th><th>Conta (plano de contas)</th>
+        <th class="num">Valor</th><th class="num">Ações</th>
+      </tr></thead>
+      <tbody>${itens.map((l) => `
+        <tr>
+          <td>${dataBR(l.data)}</td>
+          <td>${esc(l.descricao)}${l.observacao ? `<br><small style="color:var(--texto-3)">${esc(l.observacao)}</small>` : ""}</td>
+          <td><span style="display:inline-block;width:8px;height:8px;border-radius:50%;background:${esc(l.conta_cor)};margin-right:7px"></span>
+              ${esc(l.conta_codigo ? `${l.conta_codigo} — ` : "")}${esc(l.conta_nome)}</td>
+          <td class="num ${l.tipo === "receita" ? "pos" : "neg"}">${moeda(l.valor_centavos)}</td>
+          <td class="num">
+            <button class="btn mini claro" data-editar-lanc="${l.id}">Editar</button>
+            <button class="btn mini perigo" data-excluir-lanc="${l.id}">Excluir</button>
+          </td>
+        </tr>`).join("")}</tbody>
+    </table></div>` : `<p class="vazio">Nenhum lançamento encontrado com esses filtros.</p>`}`;
 }
 
 /* ------------------------- Plano de contas -------------------------- */
 
 function telaPlanoDeContas() {
   const pasta = pastaAtual();
-  const contas = contasDaPasta(pasta.id);
-  const grupo = (tipo) => contas.filter((c) => c.tipo === tipo);
   const tabela = (tipo, titulo) => {
-    const linhas = grupo(tipo);
+    const linhas = contasDaPasta(pasta.id, tipo);
     return `
       <div class="box">
         <header>
@@ -456,7 +469,7 @@ function telaPlanoDeContas() {
             <tr>
               <td>${esc(c.codigo || "—")}</td>
               <td><span style="display:inline-block;width:8px;height:8px;border-radius:50%;background:${esc(c.cor)};margin-right:7px"></span>
-                  ${esc(c.nome)}${c.pasta_id === null ? ' <small style="color:var(--texto-3)">(todas as pastas)</small>' : ""}</td>
+                  ${esc(c.nome)}</td>
               <td><span class="tag ${c.ativo ? "ativa" : "inativa"}">${c.ativo ? "Ativa" : "Inativa"}</span></td>
               <td class="num">${c.usos}</td>
               <td class="num">
@@ -510,47 +523,55 @@ function telaRelatorios() {
         </div>
       </div>
     </div>
-    <div id="r-comparativo" class="box"><p class="vazio">Carregando…</p></div>
-    <div id="r-mensal" class="box"><p class="vazio">Carregando…</p></div>
+    <div id="r-comparativo" class="box"></div>
+    <div id="r-mensal" class="box"></div>
     <div class="colunas-2">
-      <div id="r-despesas" class="box"><p class="vazio">Carregando…</p></div>
-      <div id="r-receitas" class="box"><p class="vazio">Carregando…</p></div>
+      <div id="r-despesas" class="box"></div>
+      <div id="r-receitas" class="box"></div>
     </div>`;
 }
 
-async function carregarRelatorios() {
-  const pasta = estado.relatorio.escopo === "pasta" ? `&pasta=${estado.pastaId}` : "";
-  const [comp, mensal, desp, rec] = await Promise.all([
-    chamar(`/api/relatorios/comparativo?mes=${estado.mes}`),
-    chamar(`/api/relatorios/mensal?ano=${estado.relatorio.ano}${pasta}`),
-    chamar(`/api/relatorios/categorias?mes=${estado.mes}&tipo=despesa${pasta}`),
-    chamar(`/api/relatorios/categorias?mes=${estado.mes}&tipo=receita${pasta}`),
-  ]);
+function desenharRelatorios() {
+  const escopoPasta = estado.relatorio.escopo === "pasta" ? estado.pastaId : null;
+  const doMesTodo = filtrar(estado.lancamentos, { mes: estado.mes });
+  const doEscopo = filtrar(estado.lancamentos, { pastaId: escopoPasta, mes: estado.mes });
 
-  const linhaComp = (p) => `
-    <tr>
-      <td>${iconePasta(p)} ${esc(p.nome)}</td>
-      <td class="num pos">${moeda(p.receitas)}</td>
-      <td class="num neg">${moeda(p.despesas)}</td>
-      <td class="num ${p.saldo >= 0 ? "pos" : "neg"}"><b>${moeda(p.saldo)}</b></td>
-      <td class="num">${p.participacao.toFixed(1)}%</td>
-    </tr>`;
+  const porPasta = estado.pastas.map((p) => {
+    const t = totalizar(doMesTodo.filter((l) => l.pasta_id === p.id));
+    return { ...p, ...t };
+  });
+  const totalDespesas = porPasta.reduce((s, p) => s + p.despesas, 0);
+  for (const p of porPasta) {
+    p.participacao = totalDespesas ? Math.round((p.despesas * 1000) / totalDespesas) / 10 : 0;
+  }
+  const geral = totalizar(doMesTodo);
+
   $("#r-comparativo").innerHTML = `
     <header><h4>Comparativo entre pastas — ${esc(rotuloMes(estado.mes))}</h4></header>
     <div class="tabela-rolagem"><table>
       <thead><tr><th>Pasta</th><th class="num">Entradas</th><th class="num">Despesas</th>
         <th class="num">Saldo</th><th class="num">% das despesas</th></tr></thead>
-      <tbody>${comp.pastas.map(linhaComp).join("")}
+      <tbody>${porPasta.map((p) => `
+        <tr>
+          <td>${iconePasta(p)} ${esc(p.nome)}</td>
+          <td class="num pos">${moeda(p.receitas)}</td>
+          <td class="num neg">${moeda(p.despesas)}</td>
+          <td class="num ${p.saldo >= 0 ? "pos" : "neg"}"><b>${moeda(p.saldo)}</b></td>
+          <td class="num">${p.participacao.toFixed(1)}%</td>
+        </tr>`).join("")}
         <tr style="background:var(--card-2)">
           <td><b>Total geral</b></td>
-          <td class="num pos"><b>${moeda(comp.totais.receitas)}</b></td>
-          <td class="num neg"><b>${moeda(comp.totais.despesas)}</b></td>
-          <td class="num ${comp.totais.saldo >= 0 ? "pos" : "neg"}"><b>${moeda(comp.totais.saldo)}</b></td>
+          <td class="num pos"><b>${moeda(geral.receitas)}</b></td>
+          <td class="num neg"><b>${moeda(geral.despesas)}</b></td>
+          <td class="num ${geral.saldo >= 0 ? "pos" : "neg"}"><b>${moeda(geral.saldo)}</b></td>
           <td class="num">100%</td>
         </tr></tbody>
     </table></div>`;
 
+  const doAno = filtrar(estado.lancamentos, { pastaId: escopoPasta });
+  const mensal = evolucaoMensal(doAno, estado.relatorio.ano);
   const teto = Math.max(1, ...mensal.meses.map((m) => Math.max(m.receitas, m.despesas)));
+
   $("#r-mensal").innerHTML = `
     <header>
       <h4>Evolução mensal — ${mensal.ano}</h4>
@@ -579,6 +600,8 @@ async function carregarRelatorios() {
         || `<tr><td colspan="4" class="vazio">Sem lançamentos em ${mensal.ano}.</td></tr>`}
       </tbody></table></div>`;
 
+  const desp = porConta(doEscopo, "despesa");
+  const rec = porConta(doEscopo, "receita");
   $("#r-despesas").innerHTML =
     `<header><h4>Despesas por conta</h4></header>${rosca(desp)}${tabelaCategorias(desp)}`;
   $("#r-receitas").innerHTML =
@@ -590,23 +613,19 @@ function tabelaCategorias(cat) {
   return `<div class="tabela-rolagem" style="margin-top:14px"><table>
     <thead><tr><th>Conta</th><th class="num">Total</th><th class="num">%</th></tr></thead>
     <tbody>${cat.itens.map((i) => `<tr>
-      <td>${esc(i.codigo ? i.codigo + " — " : "")}${esc(i.nome)}</td>
+      <td>${esc(i.codigo ? `${i.codigo} — ` : "")}${esc(i.nome)}</td>
       <td class="num">${moeda(i.total)}</td>
       <td class="num">${i.percentual.toFixed(1)}%</td></tr>`).join("")}</tbody></table></div>`;
-}
-
-function rotuloMes(valor) {
-  return estado.meses.find((m) => m.valor === valor)?.rotulo || valor;
 }
 
 /* --------------------------- Resumo geral --------------------------- */
 
 function desenharResumoGeral() {
-  const g = estado.painel?.geral || { receitas: 0, despesas: 0, saldo: 0 };
+  const g = totalizar(filtrar(estado.lancamentos, { mes: estado.mes }));
   $("#resumo-geral").innerHTML = `
     <div class="titulo">
       <span style="font-size:24px">📊</span>
-      <div><b>Resumo do Mês (Todas as Pastas)</b><small>${esc(estado.painel?.rotulo || "")}</small></div>
+      <div><b>Resumo do Mês (Todas as Pastas)</b><small>${esc(rotuloMes(estado.mes))}</small></div>
     </div>
     <div class="bloco"><small>Total de Entradas</small><strong class="pos">${moeda(g.receitas)}</strong></div>
     <div class="bloco"><small>Total de Despesas</small><strong class="neg">${moeda(g.despesas)}</strong></div>
@@ -638,15 +657,15 @@ function abrirModal(titulo, corpoHtml, aoSalvar, rotuloBotao = "Salvar") {
     try {
       await aoSalvar(Object.fromEntries(new FormData(form)));
       fecharModal();
-    } catch (e) {
-      aviso(e.message, "erro");
+    } catch (erro) {
+      aviso(erro.message, "erro");
       botao.disabled = false;
     }
   });
   form.querySelector("input, select, textarea")?.focus();
 }
 
-function fecharModal() { $("#modal").innerHTML = ""; }
+const fecharModal = () => { $("#modal").innerHTML = ""; };
 
 function modalLancamento(tipo, lanc = null) {
   const pasta = pastaAtual();
@@ -662,7 +681,7 @@ function modalLancamento(tipo, lanc = null) {
     <div class="linha-campos">
       <div class="campo curto">
         <label>Data</label>
-        <input type="date" name="data" required value="${esc(lanc?.data || hoje())}">
+        <input type="date" name="data" required value="${esc(lanc?.data || hojeISO())}">
       </div>
       <div class="campo">
         <label>Valor (R$)</label>
@@ -674,7 +693,7 @@ function modalLancamento(tipo, lanc = null) {
       <label>Conta do plano de contas</label>
       <select name="conta_id" required>
         ${contas.map((c) => `<option value="${c.id}" ${lanc?.conta_id === c.id ? "selected" : ""}>
-          ${esc(c.codigo ? c.codigo + " — " : "")}${esc(c.nome)}</option>`).join("")}
+          ${esc(c.codigo ? `${c.codigo} — ` : "")}${esc(c.nome)}</option>`).join("")}
       </select>
     </div>
     <div class="campo">
@@ -685,11 +704,16 @@ function modalLancamento(tipo, lanc = null) {
     <div class="campo">
       <label>Observação (opcional)</label>
       <textarea name="observacao" maxlength="500">${esc(lanc?.observacao || "")}</textarea>
-    </div>
-    <input type="hidden" name="pasta_id" value="${pasta.id}">`,
-    async (dados) => {
-      if (lanc) await chamar(`/api/lancamentos/${lanc.id}`, { method: "PUT", body: dados });
-      else await chamar("/api/lancamentos", { method: "POST", body: dados });
+    </div>`,
+    async (form) => {
+      const conta = estado.contas.find((c) => c.id === Number(form.conta_id));
+      await dados.salvarLancamento({
+        conta_id: form.conta_id,
+        data: form.data,
+        descricao: form.descricao?.trim() || conta?.nome || "",
+        observacao: form.observacao,
+        valor_centavos: paraCentavos(form.valor),
+      }, lanc?.id);
       aviso(lanc ? "Lançamento atualizado." : "Lançamento registrado.");
       await recarregar();
     });
@@ -720,7 +744,6 @@ function modalConta(tipo, conta = null) {
         <label>Pasta</label>
         <select name="pasta_id">
           ${estado.pastas.map((p) => `<option value="${p.id}" ${(conta ? conta.pasta_id : pasta.id) === p.id ? "selected" : ""}>${esc(p.nome)}</option>`).join("")}
-          <option value="" ${conta && conta.pasta_id === null ? "selected" : ""}>Todas as pastas</option>
         </select>
       </div>
       <div class="campo curto">
@@ -735,10 +758,8 @@ function modalConta(tipo, conta = null) {
         <option value="0" ${conta && !conta.ativo ? "selected" : ""}>Inativa (não aparece nos lançamentos)</option>
       </select>
     </div>`,
-    async (dados) => {
-      const corpo = { ...dados, ativo: dados.ativo === "1", pasta_id: dados.pasta_id || null };
-      if (conta) await chamar(`/api/contas/${conta.id}`, { method: "PUT", body: corpo });
-      else await chamar("/api/contas", { method: "POST", body: corpo });
+    async (form) => {
+      await dados.salvarConta({ ...form, ativo: form.ativo === "1" }, conta?.id);
       aviso(conta ? "Conta atualizada." : "Conta criada.");
       await recarregar();
     });
@@ -771,31 +792,68 @@ function modalPasta(pasta = null) {
       </div>
     </div>
     ${pasta ? `<button type="button" class="btn perigo" data-excluir-pasta="${pasta.id}">Excluir esta pasta</button>` : ""}`,
-    async (dados) => {
-      if (pasta) await chamar(`/api/pastas/${pasta.id}`, { method: "PUT", body: dados });
-      else await chamar("/api/pastas", { method: "POST", body: dados });
+    async (form) => {
+      await dados.salvarPasta(form, pasta?.id);
       aviso(pasta ? "Pasta atualizada." : "Pasta criada.");
       await recarregar();
     });
 }
 
 /* ------------------------------------------------------------------ */
+/* Exportação                                                          */
+/* ------------------------------------------------------------------ */
+
+function baixarCsv(itens, nome) {
+  if (!itens.length) return aviso("Não há lançamentos para exportar.", "erro");
+  const url = URL.createObjectURL(new Blob([paraCsv(itens)], { type: "text/csv;charset=utf-8" }));
+  const link = document.createElement("a");
+  link.href = url;
+  link.download = nome;
+  document.body.appendChild(link);
+  link.click();
+  link.remove();
+  setTimeout(() => URL.revokeObjectURL(url), 1000);
+}
+
+/* ------------------------------------------------------------------ */
 /* Eventos                                                             */
 /* ------------------------------------------------------------------ */
 
-function lancamentoDaLista(id) {
-  const area = $("#area-lista");
-  const itens = JSON.parse(area?.dataset.itens || "[]");
-  return itens.find((l) => l.id === id);
-}
+document.addEventListener("submit", async (ev) => {
+  if (ev.target.id !== "form-login") return;
+  ev.preventDefault();
+  const form = ev.target;
+  const acao = ev.submitter?.dataset.acao ?? "entrar";
+  const email = form.email.value.trim();
+  const senha = form.senha.value;
+  for (const b of form.querySelectorAll("button")) b.disabled = true;
+  try {
+    if (acao === "cadastrar") {
+      const comSessao = await dados.cadastrar(email, senha);
+      if (!comSessao) {
+        aviso("Conta criada. Confirme o e-mail que o Supabase enviou e depois entre.");
+        for (const b of form.querySelectorAll("button")) b.disabled = false;
+        return;
+      }
+    } else {
+      await dados.entrar(email, senha);
+    }
+  } catch (erro) {
+    aviso(erro.message, "erro");
+    for (const b of form.querySelectorAll("button")) b.disabled = false;
+  }
+});
 
 document.addEventListener("click", async (ev) => {
-  const alvo = ev.target.closest("[data-pasta],[data-aba],[data-novo],[data-nova-conta]," +
-    "[data-editar-conta],[data-excluir-conta],[data-editar-lanc],[data-excluir-lanc]," +
-    "[data-editar-pasta],[data-excluir-pasta],[data-fechar],[data-fundo],[data-exportar],#f-limpar,#btn-nova-pasta");
+  const alvo = ev.target.closest(
+    "[data-pasta],[data-aba],[data-novo],[data-nova-conta],[data-editar-conta]," +
+    "[data-excluir-conta],[data-editar-lanc],[data-excluir-lanc],[data-editar-pasta]," +
+    "[data-excluir-pasta],[data-fechar],[data-fundo],[data-exportar],#f-limpar," +
+    "#btn-nova-pasta,#btn-sair");
   if (!alvo) return;
   const d = alvo.dataset;
 
+  if (alvo.id === "btn-sair") return dados.sair();
   if (alvo.id === "btn-nova-pasta") return modalPasta();
   if (alvo.id === "f-limpar") {
     estado.filtros = { busca: "", conta: "", de: "", ate: "" };
@@ -813,12 +871,15 @@ document.addEventListener("click", async (ev) => {
   if (d.novo) return modalLancamento(d.novo);
   if (d.novaConta) return modalConta(d.novaConta);
   if (d.editarPasta) return modalPasta(estado.pastas.find((p) => p.id === Number(d.editarPasta)));
+
   if (d.excluirPasta) {
-    if (!confirm("Excluir esta pasta? Suas contas do plano de contas também serão removidas.")) return;
+    if (!confirm("Excluir esta pasta? As contas do plano de contas dela também serão removidas.")) return;
     try {
-      await chamar(`/api/pastas/${d.excluirPasta}`, { method: "DELETE" });
-      fecharModal(); aviso("Pasta excluída."); await recarregar();
-    } catch (e) { aviso(e.message, "erro"); }
+      await dados.excluirPasta(Number(d.excluirPasta));
+      fecharModal();
+      aviso("Pasta excluída.");
+      await recarregar();
+    } catch (erro) { aviso(erro.message, "erro"); }
     return;
   }
   if (d.editarConta) {
@@ -829,47 +890,57 @@ document.addEventListener("click", async (ev) => {
     const conta = estado.contas.find((c) => c.id === Number(d.excluirConta));
     if (!confirm(`Excluir a conta "${conta.nome}" do plano de contas?`)) return;
     try {
-      await chamar(`/api/contas/${conta.id}`, { method: "DELETE" });
-      aviso("Conta excluída."); await recarregar();
-    } catch (e) { aviso(e.message, "erro"); }
+      await dados.excluirConta(conta.id);
+      aviso("Conta excluída.");
+      await recarregar();
+    } catch (erro) { aviso(erro.message, "erro"); }
     return;
   }
   if (d.editarLanc) {
-    const lanc = lancamentoDaLista(Number(d.editarLanc));
+    const lanc = estado.lancamentos.find((l) => l.id === Number(d.editarLanc));
     if (lanc) return modalLancamento(lanc.tipo, lanc);
   }
   if (d.excluirLanc) {
     if (!confirm("Excluir este lançamento?")) return;
     try {
-      await chamar(`/api/lancamentos/${d.excluirLanc}`, { method: "DELETE" });
-      aviso("Lançamento excluído."); await recarregar();
-    } catch (e) { aviso(e.message, "erro"); }
+      await dados.excluirLancamento(Number(d.excluirLanc));
+      aviso("Lançamento excluído.");
+      await recarregar();
+    } catch (erro) { aviso(erro.message, "erro"); }
     return;
   }
   if (d.exportar) {
-    const p = d.exportar === "todos"
-      ? new URLSearchParams(estado.relatorio.escopo === "pasta"
-          ? { pasta: estado.pastaId, mes: estado.mes } : { mes: estado.mes })
-      : parametrosLista(d.exportar);
-    window.location = "/api/export.csv?" + p.toString();
+    if (d.exportar === "todos") {
+      const escopo = estado.relatorio.escopo === "pasta" ? estado.pastaId : null;
+      baixarCsv(filtrar(estado.lancamentos, { pastaId: escopo, mes: estado.mes }), "extrato.csv");
+    } else {
+      baixarCsv(lancamentosFiltrados(d.exportar), `extrato-${d.exportar}s.csv`);
+    }
   }
 });
 
-document.addEventListener("change", async (ev) => {
+document.addEventListener("change", (ev) => {
   const id = ev.target.id;
-  if (id === "filtro-mes") {
+  if (id === "filtro-mes" || id === "r-mes") {
     estado.mes = ev.target.value;
-    return recarregar();
+    return desenhar();
   }
-  if (id === "r-mes") { estado.mes = ev.target.value; return recarregar(); }
-  if (id === "r-ano") { estado.relatorio.ano = Number(ev.target.value); return carregarRelatorios(); }
-  if (id === "r-escopo") { estado.relatorio.escopo = ev.target.value; return carregarRelatorios(); }
+  if (id === "r-ano") {
+    estado.relatorio.ano = Number(ev.target.value);
+    return desenharRelatorios();
+  }
+  if (id === "r-escopo") {
+    estado.relatorio.escopo = ev.target.value;
+    return desenharRelatorios();
+  }
   if (["f-busca", "f-conta", "f-de", "f-ate"].includes(id)) {
     estado.filtros = {
-      busca: $("#f-busca").value.trim(), conta: $("#f-conta").value,
-      de: $("#f-de").value, ate: $("#f-ate").value,
+      busca: $("#f-busca").value.trim(),
+      conta: $("#f-conta").value,
+      de: $("#f-de").value,
+      ate: $("#f-ate").value,
     };
-    return carregarLista(estado.aba === "entradas" ? "receita" : "despesa");
+    return desenharLista(estado.aba === "entradas" ? "receita" : "despesa");
   }
 });
 
@@ -881,7 +952,8 @@ let temporizadorBusca;
 document.addEventListener("input", (ev) => {
   if (ev.target.id !== "f-busca") return;
   clearTimeout(temporizadorBusca);
-  temporizadorBusca = setTimeout(() => ev.target.dispatchEvent(new Event("change", { bubbles: true })), 350);
+  temporizadorBusca = setTimeout(
+    () => ev.target.dispatchEvent(new Event("change", { bubbles: true })), 300);
 });
 
-carregarTudo().catch((e) => aviso(e.message, "erro"));
+iniciar().catch((erro) => aviso(erro.message, "erro"));
