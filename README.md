@@ -32,17 +32,20 @@ sem problema — o arquivo é idempotente.
 
 ### Passo 2 — ligar o app ao seu projeto
 
-1. No Supabase: **Project Settings → Data API**. Copie o **Project URL** e a chave
-   **anon public**.
-2. No projeto, edite `public/config.js` e cole os dois valores.
+1. No Supabase: engrenagem (**Project Settings**) → **API Keys**. Copie a
+   **Publishable key** (`sb_publishable_...`); se o seu projeto ainda usar as chaves
+   antigas, abra a aba *Legacy API keys* e copie a **anon public**. As duas funcionam.
+2. No projeto, cole a chave em `public/config.js`. O **Project URL** fica em
+   *Project Settings → General* e já pode estar preenchido.
 
 ```js
 export const SUPABASE_URL = "https://xxxxxxxx.supabase.co";
 export const SUPABASE_ANON_KEY = "eyJhbGciOi...";
 ```
 
-> A chave **anon** é feita para ficar visível no navegador — quem protege os dados é o
-> login e o RLS. **Nunca** coloque aí a chave `service_role`: ela ignora o RLS.
+> Essa chave é feita para ficar visível no navegador — quem protege os dados é o login e
+> o RLS. **Nunca** coloque aí a `service_role` nem uma *Secret key* (`sb_secret_...`):
+> essas ignoram o RLS e dariam acesso total a quem abrisse o código da página.
 
 ### Passo 3 — publicar na Vercel
 

@@ -1,15 +1,20 @@
 /**
  * Endereço do seu projeto no Supabase.
  *
- * Onde achar os dois valores: painel do Supabase → seu projeto →
- * Project Settings → Data API. Copie "Project URL" e a chave "anon public".
+ * Onde achar a chave: painel do Supabase → ícone de engrenagem (Project Settings)
+ * → API Keys. Copie uma destas, o que aparecer no seu projeto:
  *
- * A chave "anon" é feita para ficar visível no navegador — quem protege os
- * dados é o login e o RLS configurado no schema.sql, não o segredo da chave.
- * Nunca coloque aqui a chave "service_role": ela ignora o RLS.
+ *   - "Publishable key"  (começa com sb_publishable_...)  ← preferida
+ *   - "anon public"      (aba Legacy API keys, texto longo começando com eyJ...)
+ *
+ * As duas funcionam. Ambas são feitas para ficar visíveis no navegador — quem
+ * protege os dados é o login e o RLS configurado em supabase/schema.sql.
+ *
+ * NUNCA coloque aqui a chave "service_role" nem uma "Secret key" (sb_secret_...):
+ * essas ignoram o RLS e dariam acesso total a quem abrisse o código da página.
  */
 
-export const SUPABASE_URL = "";
+export const SUPABASE_URL = "https://gemfvpwgzhjruwedtcda.supabase.co";
 export const SUPABASE_ANON_KEY = "";
 
 export const configurado = () => Boolean(SUPABASE_URL && SUPABASE_ANON_KEY);
