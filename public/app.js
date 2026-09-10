@@ -430,19 +430,19 @@ function desenharLista(tipo) {
       <strong class="${tipo === "receita" ? "pos" : "neg"}">${moeda(total)}</strong>
     </header>
     ${itens.length ? `
-    <div class="tabela-rolagem"><table>
+    <div class="tabela-rolagem"><table class="tabela-cartoes">
       <thead><tr>
         <th>Data</th><th>Descrição</th><th>Conta (plano de contas)</th>
         <th class="num">Valor</th><th class="num">Ações</th>
       </tr></thead>
       <tbody>${itens.map((l) => `
         <tr>
-          <td>${dataBR(l.data)}</td>
-          <td>${esc(l.descricao)}${l.observacao ? `<br><small style="color:var(--texto-3)">${esc(l.observacao)}</small>` : ""}</td>
-          <td><span style="display:inline-block;width:8px;height:8px;border-radius:50%;background:${esc(l.conta_cor)};margin-right:7px"></span>
+          <td data-rotulo="Data">${dataBR(l.data)}</td>
+          <td data-rotulo="Descrição">${esc(l.descricao)}${l.observacao ? `<br><small style="color:var(--texto-3)">${esc(l.observacao)}</small>` : ""}</td>
+          <td data-rotulo="Conta"><span style="display:inline-block;width:8px;height:8px;border-radius:50%;background:${esc(l.conta_cor)};margin-right:7px"></span>
               ${esc(l.conta_codigo ? `${l.conta_codigo} — ` : "")}${esc(l.conta_nome)}</td>
-          <td class="num ${l.tipo === "receita" ? "pos" : "neg"}">${moeda(l.valor_centavos)}</td>
-          <td class="num">
+          <td class="num ${l.tipo === "receita" ? "pos" : "neg"}" data-rotulo="Valor">${moeda(l.valor_centavos)}</td>
+          <td class="num acoes">
             <button class="btn mini claro" data-editar-lanc="${l.id}">Editar</button>
             <button class="btn mini perigo" data-excluir-lanc="${l.id}">Excluir</button>
           </td>
@@ -463,16 +463,16 @@ function telaPlanoDeContas() {
           <button class="btn mini ${tipo === "receita" ? "entrada" : "saida"}" data-nova-conta="${tipo}">＋ Nova conta</button>
         </header>
         ${linhas.length ? `
-        <div class="tabela-rolagem"><table>
+        <div class="tabela-rolagem"><table class="tabela-cartoes">
           <thead><tr><th>Código</th><th>Nome</th><th>Situação</th><th class="num">Lançamentos</th><th class="num">Ações</th></tr></thead>
           <tbody>${linhas.map((c) => `
             <tr>
-              <td>${esc(c.codigo || "—")}</td>
-              <td><span style="display:inline-block;width:8px;height:8px;border-radius:50%;background:${esc(c.cor)};margin-right:7px"></span>
+              <td data-rotulo="Código">${esc(c.codigo || "—")}</td>
+              <td data-rotulo="Conta"><span style="display:inline-block;width:8px;height:8px;border-radius:50%;background:${esc(c.cor)};margin-right:7px"></span>
                   ${esc(c.nome)}</td>
-              <td><span class="tag ${c.ativo ? "ativa" : "inativa"}">${c.ativo ? "Ativa" : "Inativa"}</span></td>
-              <td class="num">${c.usos}</td>
-              <td class="num">
+              <td data-rotulo="Situação"><span class="tag ${c.ativo ? "ativa" : "inativa"}">${c.ativo ? "Ativa" : "Inativa"}</span></td>
+              <td class="num" data-rotulo="Lançamentos">${c.usos}</td>
+              <td class="num acoes">
                 <button class="btn mini claro" data-editar-conta="${c.id}">Editar</button>
                 <button class="btn mini perigo" data-excluir-conta="${c.id}">Excluir</button>
               </td>

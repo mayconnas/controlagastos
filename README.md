@@ -17,6 +17,7 @@ backend — banco PostgreSQL, API e login. Não existe servidor próprio no meio
 | **3 centros separados: Corretor, Casa e Barbearia** | As três "pastas" no topo. Cada uma tem seu próprio plano de contas, seus lançamentos e seus totais. Dá para criar outras pastas. |
 | **Relatórios** | Aba **Relatórios**: comparativo entre as pastas, evolução mês a mês, receitas e despesas por conta, e exportação em CSV (abre no Excel). |
 | **Login** | Cada pessoa vê apenas os próprios lançamentos. |
+| **Uso no celular** | Layout próprio para telas pequenas: as listas viram cartões, o formulário abre como folha na parte de baixo e os botões têm tamanho confortável para o dedo. |
 
 ---
 
@@ -137,9 +138,31 @@ Os testes de schema precisam de um PostgreSQL. Por padrão usam
 `postgres://postgres@127.0.0.1:5433/supa_teste`; para outro servidor, defina
 `DATABASE_URL_TESTE`.
 
-Há também um teste de interface no navegador (`tests/e2e/`), que sobe a página com um
-dublê da camada de dados em memória e percorre login, lançamentos, plano de contas e
-relatórios sem depender de rede.
+Há também testes de interface no navegador (`tests/e2e/`), que sobem a página com um
+dublê da camada de dados em memória e percorrem login, lançamentos, plano de contas e
+relatórios sem depender de rede — tanto em tela de computador quanto em tela de celular,
+onde além do fluxo se verifica que nada vaza para os lados, que o valor e os botões de
+cada lançamento cabem na tela e que os alvos de toque têm 44px.
+
+## No celular
+
+As telas têm um layout próprio abaixo de 640px de largura, não só uma versão espremida:
+
+| | |
+| --- | --- |
+| ![Visão geral no celular](docs/celular-visao.png) | ![Lançamentos no celular](docs/celular-lancamentos.png) |
+
+O que muda:
+
+- **As tabelas viram cartões.** Numa tabela de cinco colunas, Valor e Ações ficariam fora
+  da tela; cada lançamento passa a ser um cartão com o rótulo à esquerda e o dado à direita.
+- **As pastas viram uma faixa** que desliza de lado, uma por vez, em vez de três blocos
+  empilhados ocupando a tela inteira.
+- **O formulário abre encostado embaixo**, como folha, com o botão Salvar por último —
+  mais perto do polegar.
+- **Alvos de toque de 44px** nos botões, e campos com fonte de 16px, que é o que impede o
+  iPhone de dar zoom sozinho quando você toca num campo.
+- **Tabelas largas de relatório** ganham sombra nas bordas, indicando que dá para arrastar.
 
 ## Telas
 

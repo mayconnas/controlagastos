@@ -214,7 +214,16 @@ th { color: var(--texto-3); font-weight: 500; font-size: 12px; text-transform: u
 td { font-size: 13px; }
 tbody tr:hover { background: var(--card-2); }
 .num { text-align: right; white-space: nowrap; }
-.tabela-rolagem { overflow-x: auto; }
+/* Rolagem lateral com sombra nas bordas: a sombra só aparece quando há
+   conteúdo escondido, indicando que dá para arrastar. */
+.tabela-rolagem {
+  overflow-x: auto;
+  background:
+    linear-gradient(to right, var(--card) 30%, rgba(17, 26, 40, 0)) left center / 34px 100% no-repeat local,
+    linear-gradient(to left, var(--card) 30%, rgba(17, 26, 40, 0)) right center / 34px 100% no-repeat local,
+    radial-gradient(farthest-side at 0 50%, rgba(0, 0, 0, .45), rgba(0, 0, 0, 0)) left center / 16px 100% no-repeat scroll,
+    radial-gradient(farthest-side at 100% 50%, rgba(0, 0, 0, .45), rgba(0, 0, 0, 0)) right center / 16px 100% no-repeat scroll;
+}
 
 .tag {
   display: inline-block; padding: 2px 9px; border-radius: 999px;
@@ -295,9 +304,150 @@ tbody tr:hover { background: var(--card-2); }
 .aviso.erro { border-left-color: var(--vermelho); }
 @keyframes entra { from { opacity: 0; transform: translateY(8px); } }
 
+/* ==================================================================
+   Telas menores
+   ================================================================== */
+
+/* ---------- Tablet ---------- */
 @media (max-width: 900px) {
   .painel { grid-template-columns: 1fr; }
-  .menu { flex-direction: row; overflow-x: auto; }
+  .menu { flex-direction: row; overflow-x: auto; scrollbar-width: none; }
+  .menu::-webkit-scrollbar { display: none; }
   .menu .titulo-pasta { display: none; }
+  .menu button { white-space: nowrap; }
   .colunas, .colunas-2 { grid-template-columns: 1fr; }
+}
+
+/* ---------- Celular ---------- */
+@media (max-width: 640px) {
+  .wrap { padding: 12px 12px 32px; }
+
+  /* Cabeçalho: uma linha para a marca, outra para os controles. */
+  .topo { gap: 10px; padding: 4px 0 14px; }
+  .topo .marca { flex: 1 1 100%; gap: 10px; }
+  .topo .emoji { font-size: 30px; }
+  .topo h1 { font-size: 23px; }
+  .topo p { font-size: 12px; line-height: 1.35; }
+  .seletor-mes { flex: 1; min-width: 0; padding: 10px; }
+  .seletor-mes select { width: 100%; min-width: 0; }
+  #btn-nova-pasta { flex: none; }
+  #usuario { flex: 1 1 100%; justify-content: space-between; order: 5; }
+  #usuario .email { max-width: none; }
+
+  /* Pastas viram uma faixa que desliza de lado, uma por vez. */
+  .pastas {
+    display: flex; gap: 10px; overflow-x: auto; padding-bottom: 6px;
+    scroll-snap-type: x mandatory; scrollbar-width: none;
+  }
+  .pastas::-webkit-scrollbar { display: none; }
+  .pasta-card {
+    flex: 0 0 84%; scroll-snap-align: start; padding: 14px 16px;
+  }
+  .pasta-card h3 { font-size: 18px; }
+
+  .painel { padding: 12px; border-radius: 14px; gap: 12px; }
+  .menu { gap: 4px; margin: -2px -4px 0; padding: 0 4px 4px; }
+  .menu button { padding: 11px 13px; font-size: 13px; min-height: 44px; }
+  .menu button.ativo::before { display: none; }
+  .menu button.ativo { background: var(--cor, var(--azul)); color: #06121f; font-weight: 700; }
+
+  /* Cartões e caixas */
+  .grade-kpi { grid-template-columns: 1fr; gap: 10px; }
+  .kpi { padding: 13px 15px; }
+  .kpi .bolha { width: 40px; height: 40px; font-size: 18px; }
+  .kpi strong { font-size: 20px; }
+  .box { padding: 14px; }
+  .box > header { margin-bottom: 12px; }
+  .box > header > div { flex: 1 1 100%; }
+
+  /* Rosca: gráfico em cima, legenda embaixo, ambos centrados. */
+  .rosca { justify-content: center; gap: 14px; }
+  .legenda { min-width: 100%; }
+
+  /* Filtros: um campo por linha, e o botão ocupando a largura toda. */
+  .filtros { gap: 10px; }
+  .campo { flex: 1 1 100%; min-width: 0; }
+  .campo.curto { flex: 1 1 calc(50% - 5px); min-width: 0; }
+  .filtros > .btn { width: 100%; }
+
+  /* Toque confortável e sem zoom automático no iPhone (fonte >= 16px). */
+  .campo input, .campo select, .campo textarea { font-size: 16px; padding: 12px; }
+  .btn { padding: 12px 14px; min-height: 44px; }
+  .btn.mini { padding: 9px 12px; font-size: 13px; }
+
+  /* -----------------------------------------------------------------
+     Tabelas viram cartões.
+     Numa tela estreita, uma tabela de cinco colunas empurra Valor e
+     Ações para fora da vista. Cada linha passa a ser um cartão, com o
+     nome da coluna à esquerda e o conteúdo à direita.
+     ----------------------------------------------------------------- */
+  .tabela-cartoes { border-collapse: separate; border-spacing: 0; }
+  .tabela-cartoes thead { display: none; }
+  .tabela-cartoes,
+  .tabela-cartoes tbody,
+  .tabela-cartoes tr,
+  .tabela-cartoes td { display: block; width: 100%; }
+
+  .tabela-cartoes tr {
+    background: var(--card-2); border: 1px solid var(--linha);
+    border-radius: 12px; padding: 12px 14px; margin-bottom: 10px;
+  }
+  .tabela-cartoes tr:hover { background: var(--card-2); }
+  .tabela-cartoes td {
+    border: 0; padding: 5px 0 5px 96px; position: relative;
+    display: block; text-align: right; min-height: 22px;
+  }
+  .tabela-cartoes td::before {
+    content: attr(data-rotulo);
+    position: absolute; left: 0; top: 7px; max-width: 88px;
+    color: var(--texto-3); font-size: 11px; text-transform: uppercase;
+    letter-spacing: .4px; text-align: left; line-height: 1.2;
+  }
+  .tabela-cartoes td[data-rotulo="Valor"] { font-size: 17px; font-weight: 700; }
+  .tabela-cartoes td.acoes {
+    display: flex; gap: 8px; padding: 11px 0 0; margin-top: 6px;
+    border-top: 1px solid var(--linha);
+  }
+  .tabela-cartoes td.acoes::before { display: none; }
+  /* Alvo de toque confortável (~44px), como recomendam os guias de acessibilidade). */
+  .tabela-cartoes td.acoes .btn { flex: 1; min-height: 44px; padding: 12px 14px; font-size: 14px; }
+
+  /* Relatórios continuam em tabela: a comparação entre colunas é o ponto. */
+  .tabela-rolagem { -webkit-overflow-scrolling: touch; }
+  .tabela-rolagem:has(.tabela-cartoes) { background: none; overflow-x: visible; }
+  #r-comparativo table, #r-mensal table { min-width: 520px; }
+
+  /* Doze meses não cabem: a área do gráfico desliza de lado. */
+  .barras { overflow-x: auto; gap: 6px; height: 165px; padding-bottom: 6px; }
+  .barras .mes { min-width: 30px; }
+
+  .resumo-geral { gap: 14px; padding: 14px 16px; }
+  .resumo-geral .titulo { flex: 1 1 100%; }
+  .resumo-geral .bloco { flex: 1; min-width: 92px; }
+  .resumo-geral .bloco strong { font-size: 16px; }
+
+  /* Modal encostado embaixo, como as telas de celular costumam fazer. */
+  .modal-fundo { align-items: flex-end; padding: 0; }
+  .modal {
+    width: 100%; max-height: 92vh; border-radius: 18px 18px 0 0;
+    border-bottom: 0; animation: sobe .2s ease-out;
+  }
+  .modal .linha-campos { gap: 12px; }
+  /* Salvar por último: é o botão mais perto do polegar. */
+  .modal footer { flex-direction: column; gap: 8px; }
+  .modal footer .btn { width: 100%; }
+  @keyframes sobe { from { transform: translateY(24px); } }
+
+  .caixa-login { margin: 16px auto; max-width: none; }
+  .acoes-login { flex-direction: column; }
+
+  #avisos { right: 12px; left: 12px; bottom: 12px; }
+  .aviso { max-width: none; }
+}
+
+/* ---------- Celular pequeno ---------- */
+@media (max-width: 380px) {
+  .topo h1 { font-size: 21px; }
+  .pasta-card { flex-basis: 88%; }
+  .resumo-geral .bloco { flex: 1 1 100%; }
 }
