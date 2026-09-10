@@ -76,6 +76,11 @@ function contasDaPasta(pastaId, tipo, somenteAtivas = false) {
 async function iniciar() {
   if (!dados.configurado()) return telaConfiguracao();
 
+  // A sessão fica guardada no navegador, então quem já entrou uma vez volta
+  // direto. Enquanto conferimos isso, mostramos "carregando" em vez de deixar
+  // a tela em branco (que pareceria ter deslogado).
+  telaCarregando();
+
   const sessao = await dados.sessaoAtual();
   estado.sessao = sessao;
   if (sessao) await entrou();
@@ -98,6 +103,7 @@ async function entrou() {
     await recarregar();
   } catch (erro) {
     aviso(erro.message, "erro");
+    telaFalha(erro.message);
   }
 }
 
@@ -128,6 +134,30 @@ function limparMoldura() {
   $("#menu").innerHTML = "";
   $("#resumo-geral").innerHTML = "";
   $("#aviso-armazenamento").innerHTML = "";
+}
+
+function telaCarregando() {
+  document.body.classList.add("sem-sessao");
+  limparMoldura();
+  $("#conteudo").innerHTML = `
+    <div class="box caixa-login">
+      <p class="vazio">Carregando…</p>
+    </div>`;
+}
+
+/** Sessão restaurada, mas os dados não vieram: dá o motivo e uma saída. */
+function telaFalha(mensagem) {
+  document.body.classList.add("sem-sessao");
+  limparMoldura();
+  $("#conteudo").innerHTML = `
+    <div class="box caixa-login">
+      <header><h4>Não consegui carregar seus dados</h4></header>
+      <p class="nota">${esc(mensagem)}</p>
+      <div class="acoes-login">
+        <button class="btn entrada" data-recarregar>Tentar de novo</button>
+        <button class="btn claro" id="btn-sair">Sair</button>
+      </div>
+    </div>`;
 }
 
 function telaConfiguracao() {
@@ -849,11 +879,12 @@ document.addEventListener("click", async (ev) => {
     "[data-pasta],[data-aba],[data-novo],[data-nova-conta],[data-editar-conta]," +
     "[data-excluir-conta],[data-editar-lanc],[data-excluir-lanc],[data-editar-pasta]," +
     "[data-excluir-pasta],[data-fechar],[data-fundo],[data-exportar],#f-limpar," +
-    "#btn-nova-pasta,#btn-sair");
+    "#btn-nova-pasta,#btn-sair,[data-recarregar]");
   if (!alvo) return;
   const d = alvo.dataset;
 
   if (alvo.id === "btn-sair") return dados.sair();
+  if (d.recarregar !== undefined) { telaCarregando(); return entrou(); }
   if (alvo.id === "btn-nova-pasta") return modalPasta();
   if (alvo.id === "f-limpar") {
     estado.filtros = { busca: "", conta: "", de: "", ate: "" };

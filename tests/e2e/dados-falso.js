@@ -9,7 +9,19 @@
 export const configurado = () => true;
 export const traduzirErro = (e) => e?.message ?? "Erro.";
 
-let sessao = null;
+const CHAVE_SESSAO = "financas-teste-sessao";
+
+const lerSessao = () => {
+  try { return JSON.parse(localStorage.getItem(CHAVE_SESSAO)) ?? null; } catch { return null; }
+};
+const gravarSessao = (s) => {
+  try {
+    if (s) localStorage.setItem(CHAVE_SESSAO, JSON.stringify(s));
+    else localStorage.removeItem(CHAVE_SESSAO);
+  } catch { /* modo privado do navegador */ }
+};
+
+let sessao = lerSessao();
 let ouvinte = null;
 let sequencia = 100;
 
@@ -105,16 +117,22 @@ export function aoMudarAutenticacao(cb) { ouvinte = cb; }
 export async function entrar(email, senha) {
   if (senha !== "senha123") throw new Error("E-mail ou senha incorretos.");
   sessao = { user: { id: "u1", email } };
+  gravarSessao(sessao);
   ouvinte?.(sessao);
 }
 
 export async function cadastrar(email) {
   sessao = { user: { id: "u1", email } };
+  gravarSessao(sessao);
   ouvinte?.(sessao);
   return true;
 }
 
-export async function sair() { sessao = null; ouvinte?.(null); }
+export async function sair() {
+  sessao = null;
+  gravarSessao(null);
+  ouvinte?.(null);
+}
 
 /* ------------------------------ leitura ----------------------------- */
 
