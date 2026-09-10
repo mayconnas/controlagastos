@@ -15,6 +15,6 @@
  */
 
 export const SUPABASE_URL = "https://gemfvpwgzhjruwedtcda.supabase.co";
-export const SUPABASE_ANON_KEY = "";
+export const SUPABASE_ANON_KEY = "sb_publishable_K_lPczLXIzfLiEDlCv9dng_vAnE1_GU";
 
 export const configurado = () => Boolean(SUPABASE_URL && SUPABASE_ANON_KEY);

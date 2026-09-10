@@ -50,6 +50,15 @@ export function traduzirErro(erro) {
   );
   if (restricao) return POR_RESTRICAO[restricao];
 
+  // Tabela inexistente: quase sempre é o supabase/schema.sql que ainda não rodou.
+  if (code === "PGRST205" || code === "42P01" || /schema cache/i.test(message ?? "")) {
+    return "As tabelas ainda não existem no Supabase. Abra o SQL Editor do seu projeto " +
+      "e execute o arquivo supabase/schema.sql.";
+  }
+  if (code === "PGRST202" || /preparar_conta_nova/.test(message ?? "")) {
+    return "A função de preparação não existe no Supabase. Execute o arquivo " +
+      "supabase/schema.sql no SQL Editor do seu projeto.";
+  }
   if (code === "23505") return "Já existe um registro com esses dados.";
   if (code === "23503") return "Este registro está sendo usado por outro e não pode ser excluído.";
   if (code === "23514") return "Algum campo está fora do formato esperado.";
